@@ -660,6 +660,7 @@ name = "rutex"
 version = "0.1.0"
 dependencies = [
  "async-channel",
+ "cairo-rs",
  "glib-unix",
  "gtk4",
  "libadwaita",

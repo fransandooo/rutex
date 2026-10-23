@@ -137,6 +137,29 @@ fn definitions(root: &Path, preamble: &str) -> String {
         .join("\n")
 }
 
+/// Changes whenever the preamble or a file it \\inputs changes.
+fn preamble_fingerprint(root: &Path, preamble: &str) -> u64 {
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    preamble.hash(&mut h);
+    for line in preamble.lines() {
+        for call in crate::index::calls(strip_comment(line)) {
+            if matches!(call.name, "input" | "include" | "usepackage")
+                && let Some(arg) = call.arg
+            {
+                for name in arg.split(',') {
+                    let p = root.join(name.trim());
+                    for p in [p.clone(), p.with_extension("tex"), p.with_extension("sty")] {
+                        if let Ok(meta) = fs::metadata(&p) {
+                            (p, meta.modified().ok()).hash(&mut h);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    h.finish()
+}
+
 const MINIMAL: &str = "\\usepackage{amsmath,amssymb,mathtools,bm}\n";
 
 pub struct MathPreview {
@@ -145,6 +168,7 @@ pub struct MathPreview {
     preamble: RefCell<String>,
     program: RefCell<&'static str>,
     cache: RefCell<HashMap<u64, Result<gdk::Texture, String>>>,
+    fingerprint: RefCell<u64>,
 }
 
 impl MathPreview {
@@ -155,6 +179,7 @@ impl MathPreview {
             preamble: RefCell::default(),
             program: RefCell::new("pdflatex"),
             cache: RefCell::default(),
+            fingerprint: RefCell::default(),
         })
     }
 
@@ -170,76 +195,135 @@ impl MathPreview {
             crate::compiler::Engine::LuaLatex => "lualatex",
             _ => "pdflatex",
         };
+        // Precompile the preamble now, so the first hover is already fast.
+        let (root, dir, pre, program) = (self.root.clone(), self.dir.clone(), self.preamble.borrow().clone(), *self.program.borrow());
+        let fp = preamble_fingerprint(&root, &pre);
+        if *self.fingerprint.borrow() != fp {
+            self.cache.borrow_mut().clear();
+            *self.fingerprint.borrow_mut() = fp;
+        }
+        std::thread::spawn(move || {
+            let _ = fs::create_dir_all(&dir);
+            preamble_format(&root, &dir, &pre, program, fp);
+        });
     }
 
     /// Renders a formula, tinted with `color` (the theme's text color).
+    /// Results are cached in memory and as PNG files in the build folder.
     pub async fn render(self: &Rc<Self>, formula: String, color: gdk::RGBA) -> Result<gdk::Texture, String> {
         let mut h = std::collections::hash_map::DefaultHasher::new();
-        (&formula, color.to_string(), &*self.preamble.borrow()).hash(&mut h);
+        (&formula, color.to_string(), *self.fingerprint.borrow(), *self.program.borrow()).hash(&mut h);
         let key = h.finish();
         if let Some(r) = self.cache.borrow().get(&key) {
             return r.clone();
         }
-        let (root, dir, preamble, program) = (self.root.clone(), self.dir.clone(), self.preamble.borrow().clone(), *self.program.borrow());
-        let rgb = (color.red() as f64, color.green() as f64, color.blue() as f64);
-        let pixels = gio::spawn_blocking(move || render_blocking(&root, &dir, &preamble, program, &formula, key, rgb))
-            .await
-            .unwrap_or_else(|_| Err("render thread failed".into()));
-        let result = pixels.map(|(w, h, stride, data)| {
-            gdk::MemoryTexture::new(w, h, gdk::MemoryFormat::B8g8r8a8Premultiplied, &glib::Bytes::from_owned(data), stride as usize).upcast()
-        });
+        let png = self.dir.join(format!("{key:016x}.png"));
+        let result = if png.is_file() {
+            gdk::Texture::from_filename(&png).map_err(|e| e.to_string())
+        } else {
+            let (root, dir, preamble, program, fp) = (self.root.clone(), self.dir.clone(), self.preamble.borrow().clone(), *self.program.borrow(), *self.fingerprint.borrow());
+            let rgb = (color.red() as f64, color.green() as f64, color.blue() as f64);
+            let out = png.clone();
+            gio::spawn_blocking(move || render_blocking(&root, &dir, &preamble, program, fp, &formula, key, rgb, &out))
+                .await
+                .unwrap_or_else(|_| Err("render thread failed".into()))
+                .and_then(|()| gdk::Texture::from_filename(&png).map_err(|e| e.to_string()))
+        };
         self.cache.borrow_mut().insert(key, result.clone());
         result
     }
 }
 
-type Pixels = (i32, i32, i32, Vec<u8>);
+/// Only one thread builds a given preamble format at a time.
+static FORMAT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-fn render_blocking(root: &Path, dir: &Path, preamble: &str, program: &str, formula: &str, key: u64, rgb: (f64, f64, f64)) -> Result<Pixels, String> {
+/// Runs a TeX program with a time limit; true if it produced `pdf`.
+fn run_tex(root: &Path, dir: &Path, program: &str, args: &[String], formats: bool) -> Result<(), String> {
+    let mut cmd = crate::compiler::command(program);
+    cmd.current_dir(root).env("max_print_line", "1000").args(args).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+    if formats {
+        // Our precompiled preamble lives in the build folder.
+        cmd.env("TEXFORMATS", format!("{}:", dir.display()));
+    }
+    let mut child = cmd.spawn().map_err(|e| e.to_string())?;
+    let started = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return Ok(()),
+            Ok(None) if started.elapsed() > Duration::from_secs(30) => {
+                let _ = child.kill();
+                return Err("timeout".into());
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(20)),
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+}
+
+/// Precompiles the preamble into a format (mylatexformat), so each formula
+/// costs ~0.3 s instead of reloading every package. pdfLaTeX only; returns
+/// the format name, or None to compile normally.
+fn preamble_format(root: &Path, dir: &Path, preamble: &str, program: &str, fingerprint: u64) -> Option<String> {
+    if program != "pdflatex" {
+        return None;
+    }
+    let name = format!("pre-{fingerprint:016x}");
+    let _guard = FORMAT_LOCK.lock().ok()?;
+    if dir.join(format!("{name}.fmt")).is_file() {
+        return Some(name);
+    }
+    // Formats are ~15 MB: keep only the current one.
+    for e in fs::read_dir(dir).into_iter().flatten().flatten() {
+        if e.file_name().to_string_lossy().starts_with("pre-") {
+            let _ = fs::remove_file(e.path());
+        }
+    }
+    let tex = dir.join(format!("{name}.tex"));
+    fs::write(&tex, format!("\\documentclass[border=1pt,varwidth=40em]{{standalone}}\n{preamble}\n\\begin{{document}}\n\\end{{document}}\n")).ok()?;
+    let args = vec!["-ini".into(), "-interaction=nonstopmode".into(), format!("-output-directory={}", dir.display()), format!("-jobname={name}"), "&pdflatex".into(), "mylatexformat.ltx".into(), tex.display().to_string()];
+    run_tex(root, dir, "pdflatex", &args, false).ok()?;
+    dir.join(format!("{name}.fmt")).is_file().then_some(name)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_blocking(root: &Path, dir: &Path, preamble: &str, program: &str, fingerprint: u64, formula: &str, key: u64, rgb: (f64, f64, f64), png: &Path) -> Result<(), String> {
     fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let name = format!("f{key:016x}");
-    let attempt = |pre: &str| -> Result<PathBuf, String> {
-        let tex = dir.join(format!("{name}.tex"));
-        let src = format!("\\documentclass[preview,border=1pt,varwidth=40em]{{standalone}}\n{pre}\n\\begin{{document}}\n{formula}\n\\end{{document}}\n");
+    let tex = dir.join(format!("{name}.tex"));
+    let pdf = dir.join(format!("{name}.pdf"));
+    let compile = |src: String, formats: bool| -> Result<(), String> {
         fs::write(&tex, src).map_err(|e| e.to_string())?;
-        let mut child = crate::compiler::command(program)
-            .current_dir(root)
-            .env("max_print_line", "1000")
-            .args(["-interaction=nonstopmode", "-halt-on-error"])
-            .arg(format!("-output-directory={}", dir.display()))
-            .arg(&tex)
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .map_err(|e| e.to_string())?;
-        // A broken preamble must not hang the hover.
-        let started = Instant::now();
-        loop {
-            match child.try_wait() {
-                Ok(Some(_)) => break,
-                Ok(None) if started.elapsed() > Duration::from_secs(20) => {
-                    let _ = child.kill();
-                    return Err("timeout".into());
-                }
-                Ok(None) => std::thread::sleep(Duration::from_millis(30)),
-                Err(e) => return Err(e.to_string()),
-            }
-        }
-        let pdf = dir.join(format!("{name}.pdf"));
+        let _ = fs::remove_file(&pdf);
+        let args = vec!["-interaction=nonstopmode".into(), "-halt-on-error".into(), format!("-output-directory={}", dir.display()), tex.display().to_string()];
+        run_tex(root, dir, program, &args, formats)?;
         if pdf.is_file() {
-            Ok(pdf)
+            Ok(())
         } else {
             let log = fs::read_to_string(dir.join(format!("{name}.log"))).unwrap_or_default();
             Err(log.lines().find(|l| l.starts_with('!')).unwrap_or("LaTeX error").trim_start_matches("! ").to_string())
         }
     };
-    let pdf = attempt(preamble).or_else(|_| attempt(&format!("{MINIMAL}{}", definitions(root, preamble))))?;
+    let body = format!("\\begin{{document}}\n{formula}\n\\end{{document}}\n");
+    let full = |pre: &str| format!("\\documentclass[border=1pt,varwidth=40em]{{standalone}}\n{pre}\n{body}");
+    // 1. Precompiled preamble (fast); 2. the preamble as is; 3. a minimal one.
+    let mut result = match preamble_format(root, dir, preamble, program, fingerprint) {
+        Some(fmt) => compile(format!("%&{fmt}\n{body}"), true),
+        None => Err(String::new()),
+    };
+    if result.is_err() {
+        result = compile(full(preamble), false);
+    }
+    if result.is_err() {
+        result = compile(full(&format!("{MINIMAL}{}", definitions(root, preamble))), false);
+    }
+    result?;
+
     let data = fs::read(&pdf).map_err(|e| e.to_string())?;
     let doc = poppler::Document::from_bytes(&glib::Bytes::from_owned(data), None).map_err(|e| e.to_string())?;
     let page = doc.page(0).ok_or("empty")?;
     let (pw, ph) = page.size();
-    // 2.4 px per point: crisp on HiDPI, shown at half size.
-    let scale = 2.4;
+    // 2 px per point, shown at half size: crisp on HiDPI screens.
+    let scale = 2.0;
     let (w, h) = (((pw * scale).ceil() as i32).max(1), ((ph * scale).ceil() as i32).max(1));
     let mut surface = cairo::ImageSurface::create(cairo::Format::ARgb32, w, h).map_err(|e| e.to_string())?;
     {
@@ -248,26 +332,56 @@ fn render_blocking(root: &Path, dir: &Path, preamble: &str, program: &str, formu
         page.render(&cr);
     }
     surface.flush();
-    let stride = surface.stride();
-    let mut data = surface.data().map_err(|e| e.to_string())?.to_vec();
-    // Black ink on transparent → theme text color (premultiplied BGRA).
-    for px in data.chunks_exact_mut(4) {
-        let a = px[3] as f64;
-        px[0] = (rgb.2 * a) as u8;
-        px[1] = (rgb.1 * a) as u8;
-        px[2] = (rgb.0 * a) as u8;
+    let stride = surface.stride() as usize;
+    let (x0, y0, x1, y1) = {
+        let data = surface.data().map_err(|e| e.to_string())?;
+        // Black ink on transparent → theme text color (premultiplied BGRA),
+        // and find the ink's bounding box to crop the empty page around it.
+        let mut bbox = (w, h, 0, 0);
+        let mut data = data;
+        for y in 0..h as usize {
+            for x in 0..w as usize {
+                let px = &mut data[y * stride + x * 4..y * stride + x * 4 + 4];
+                let a = px[3] as f64;
+                if px[3] > 8 {
+                    bbox = (bbox.0.min(x as i32), bbox.1.min(y as i32), bbox.2.max(x as i32), bbox.3.max(y as i32));
+                }
+                px[0] = (rgb.2 * a) as u8;
+                px[1] = (rgb.1 * a) as u8;
+                px[2] = (rgb.0 * a) as u8;
+            }
+        }
+        bbox
+    };
+    if x1 < x0 {
+        return Err("empty formula".into());
     }
-    let _ = fs::remove_file(&pdf);
-    Ok((w, h, stride, data))
+    let pad = 4;
+    let (cx, cy) = ((x0 - pad).max(0), (y0 - pad).max(0));
+    let (cw, ch) = ((x1 + pad + 1).min(w) - cx, (y1 + pad + 1).min(h) - cy);
+    let cropped = cairo::ImageSurface::create(cairo::Format::ARgb32, cw, ch).map_err(|e| e.to_string())?;
+    {
+        let cr = cairo::Context::new(&cropped).map_err(|e| e.to_string())?;
+        cr.set_source_surface(&surface, -(cx as f64), -(cy as f64)).map_err(|e| e.to_string())?;
+        cr.paint().map_err(|e| e.to_string())?;
+    }
+    let mut file = fs::File::create(png).map_err(|e| e.to_string())?;
+    cropped.write_to_png(&mut file).map_err(|e| e.to_string())?;
+    for ext in ["pdf", "aux", "log"] {
+        let _ = fs::remove_file(dir.join(format!("{name}.{ext}")));
+    }
+    Ok(())
 }
 
-/// Bubble with the rendered formula (shown at half the rendered size).
+/// Bubble with the rendered formula, shown at half the rendered size (the
+/// render is 2× for HiDPI) and never wider than the editor can comfortably show.
 pub fn bubble(texture: &gdk::Texture) -> gtk::Widget {
-    let picture = gtk::Picture::builder().paintable(texture).can_shrink(false).build();
     let (w, h) = (texture.width() / 2, texture.height() / 2);
-    picture.set_size_request(w.min(900), h.min(600));
-    picture.set_content_fit(gtk::ContentFit::Contain);
-    let b = gtk::Box::builder().css_classes(["math-bubble"]).build();
+    let max_w = 620;
+    let (w, h) = if w > max_w { (max_w, h * max_w / w) } else { (w, h) };
+    let picture = gtk::Picture::builder().paintable(texture).can_shrink(true).content_fit(gtk::ContentFit::Contain).halign(gtk::Align::Center).build();
+    picture.set_size_request(w, h);
+    let b = gtk::Box::builder().css_classes(["bubble", "math-bubble"]).halign(gtk::Align::Center).build();
     b.append(&picture);
     b.upcast()
 }
@@ -309,12 +423,15 @@ mod tests {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("demo");
         let dir = std::env::temp_dir().join(format!("rutex-math-{}", std::process::id()));
         let pre = preamble_of(&fs::read_to_string(root.join("main.tex")).unwrap());
-        let t = Instant::now();
-        let (w, h, _, data) = render_blocking(&root, &dir, &pre, "pdflatex", "$\\norm{x}^2 + \\R$", 1, (1.0, 1.0, 1.0)).unwrap();
-        eprintln!("rendered {w}x{h} in {:?}", t.elapsed());
-        assert!(w > 20 && h > 10);
-        assert!(data.chunks_exact(4).any(|p| p[3] > 200), "there is ink");
-        let err = render_blocking(&root, &dir, &pre, "pdflatex", "$\\frac{1}{$", 2, (1.0, 1.0, 1.0)).unwrap_err();
+        let png = dir.join("out.png");
+        for (i, f) in ["$\\norm{x}^2 + \\R$", "$\\int_0^1 f$", "\\begin{align*}a &= b\\\\ c &= d\\end{align*}"].iter().enumerate() {
+            let t = Instant::now();
+            render_blocking(&root, &dir, &pre, "pdflatex", 7, f, i as u64, (1.0, 1.0, 1.0), &png).unwrap();
+            let img = cairo::ImageSurface::create_from_png(&mut fs::File::open(&png).unwrap()).unwrap();
+            eprintln!("{f}: {}x{} px in {:?}", img.width(), img.height(), t.elapsed());
+            assert!(img.width() < 600, "cropped to the ink, not the 40em page");
+        }
+        let err = render_blocking(&root, &dir, &pre, "pdflatex", 7, "$\\frac{1}{$", 9, (1.0, 1.0, 1.0), &png).unwrap_err();
         eprintln!("error: {err}");
         fs::remove_dir_all(dir).ok();
     }
