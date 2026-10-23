@@ -41,12 +41,23 @@ const MAX_RENDER_WIDTH: i32 = 6000;
 enum Req {
     Load { generation: u64, path: PathBuf },
     Render { generation: u64, page: usize, width_px: i32, colors: Colors },
+    /// Líneas de texto de una página (para marcar con precisión un destino).
+    Lines { generation: u64, page: usize },
 }
 
 enum Resp {
     Loaded { generation: u64, sizes: Vec<(f64, f64)>, links: Vec<Vec<Link>> },
     Failed { generation: u64, error: String },
     Rendered { generation: u64, page: usize, width: i32, height: i32, stride: i32, data: Vec<u8>, colors: Colors },
+    Lines { generation: u64, page: usize, lines: Vec<(f64, f64)> },
+}
+
+/// Qué indica la `y` de la marca roja: la línea base de un texto (SyncTeX) o
+/// el ancla de un enlace, que hyperref coloca justo encima de la línea.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum MarkKind {
+    Baseline,
+    Anchor,
 }
 
 /// Búsqueda inversa: posición del clic y, si se pulsó un enlace interno, su
@@ -99,7 +110,9 @@ struct State {
     tick: u64,
     bound: HashMap<usize, glib::WeakRef<gtk::DrawingArea>>,
     requested: HashSet<(usize, i32, u64)>,
-    marker: Option<(usize, f64)>,
+    marker: Option<(usize, f64, MarkKind)>,
+    /// Líneas de texto (arriba, abajo) por página, pedidas bajo demanda.
+    lines: HashMap<usize, Vec<(f64, f64)>>,
     links: Vec<Vec<Link>>,
     /// Posiciones de scroll a las que volver tras seguir un enlace.
     back: Vec<f64>,
@@ -435,17 +448,20 @@ impl PdfView {
 
     /// Lleva la vista a una posición (búsqueda directa) y la marca un momento.
     pub fn reveal(self: &Rc<Self>, pos: PdfPos) {
-        self.reveal_at(pos, 0.35);
+        self.reveal_at(pos, 0.35, MarkKind::Baseline);
     }
 
     /// Como `reveal`, dejando la posición a `frac` de la altura de la vista.
-    fn reveal_at(self: &Rc<Self>, pos: PdfPos, frac: f64) {
+    fn reveal_at(self: &Rc<Self>, pos: PdfPos, frac: f64, kind: MarkKind) {
         if pos.page >= self.model.n_items() as usize {
             return;
         }
         {
             let mut st = self.state.borrow_mut();
-            st.marker = Some((pos.page, pos.y));
+            st.marker = Some((pos.page, pos.y, kind));
+            if !st.lines.contains_key(&pos.page) {
+                let _ = self.tx.try_send(Req::Lines { generation: st.shown, page: pos.page });
+            }
             if let Some(id) = st.marker_timeout.take() {
                 id.remove();
             }
@@ -474,7 +490,7 @@ impl PdfView {
             let Some(this) = weak.upgrade() else { return };
             let mut st = this.state.borrow_mut();
             st.marker_timeout = None;
-            if let Some((page, _)) = st.marker.take()
+            if let Some((page, _, _)) = st.marker.take()
                 && let Some(da) = st.bound.get(&page).and_then(|w| w.upgrade()) {
                     da.queue_draw();
                 }
@@ -499,7 +515,7 @@ impl PdfView {
                     }
                 }
                 self.back_btn.set_visible(true);
-                self.reveal_at(PdfPos { page, x: 0.0, y: y.unwrap_or(0.0) }, 0.08);
+                self.reveal_at(PdfPos { page, x: 0.0, y: y.unwrap_or(0.0) }, 0.08, MarkKind::Anchor);
             }
             LinkTarget::Uri(uri) => {
                 let window = widget.root().and_downcast::<gtk::Window>();
@@ -651,13 +667,15 @@ impl PdfView {
             needs_render = c.generation != shown || (c.width - target).abs() > 1 || c.colors != colors;
         }
 
-        if let Some((mpage, my)) = st.marker
-            && mpage == page {
-                let y = my * st.scale();
-                cr.set_source_rgba(0.95, 0.3, 0.2, 0.35);
-                cr.rectangle(0.0, (y - 14.0).max(0.0), w, 18.0);
-                cr.fill().ok();
-            }
+        if let Some((mpage, my, kind)) = st.marker
+            && mpage == page
+        {
+            let (top, bottom) = marker_band(st.lines.get(&page).map(Vec::as_slice).unwrap_or(&[]), my, kind);
+            let s = st.scale();
+            cr.set_source_rgba(0.95, 0.3, 0.2, 0.3);
+            cr.rectangle(0.0, (top - 2.0) * s, w, (bottom - top + 4.0) * s);
+            cr.fill().ok();
+        }
 
         if needs_render && shown > 0 && st.requested.insert((page, target, shown)) {
             let _ = self.tx.try_send(Req::Render { generation: shown, page, width_px: target, colors: st.colors });
@@ -675,6 +693,7 @@ impl PdfView {
                     }
                     st.shown = generation;
                     st.links = links;
+                    st.lines.clear();
                     st.max_w = sizes.iter().map(|s| s.0).fold(0.0, f64::max);
                     st.requested.clear();
                     let n = sizes.len();
@@ -703,6 +722,16 @@ impl PdfView {
                 if generation == self.state.borrow().generation && !self.has_document() {
                     self.status.set_description(Some(&trf("Could not open the PDF:\n{}", &[&error])));
                     self.stack.set_visible_child_name("empty");
+                }
+            }
+            Resp::Lines { generation, page, lines } => {
+                let mut st = self.state.borrow_mut();
+                if generation != st.shown {
+                    return;
+                }
+                st.lines.insert(page, lines);
+                if let Some(da) = st.bound.get(&page).and_then(|w| w.upgrade()) {
+                    da.queue_draw();
                 }
             }
             Resp::Rendered { generation, page, width, height, stride, data, colors } => {
@@ -778,6 +807,20 @@ fn worker(rx: async_channel::Receiver<Req>, tx: async_channel::Sender<Resp>) {
             continue;
         }
 
+        // Las peticiones de líneas son baratas y la marca roja las espera: primero.
+        if let Some(i) = pending.iter().position(|r| matches!(r, Req::Lines { .. })) {
+            let Req::Lines { generation, page } = pending.remove(i) else { unreachable!() };
+            if let Some((doc_gen, d)) = doc.as_ref()
+                && *doc_gen == generation
+                && let Some(p) = d.page(page as i32)
+            {
+                let resp = Resp::Lines { generation, page, lines: text_lines(&p) };
+                if tx.send_blocking(resp).is_err() {
+                    return;
+                }
+            }
+            continue;
+        }
         let Some(Req::Render { generation, page, width_px, colors }) = pending.pop() else { continue };
         pending.retain(|r| !matches!(r, Req::Render { page: p, .. } if *p == page));
         let Some((doc_gen, d)) = doc.as_ref() else { continue };
@@ -876,9 +919,23 @@ mod tests {
         }
         let uri = page_links(&doc, 1, &sizes);
         assert!(uri.iter().any(|l| matches!(&l.target, LinkTarget::Uri(u) if u == "https://example.org")));
+        // Líneas de texto de la página de la sección 1: título y párrafo, ordenadas.
+        let lines = text_lines(&doc.page(1).unwrap());
+        assert!(lines.len() >= 2 && lines.windows(2).all(|w| w[0].0 < w[1].0), "{lines:?}");
         let back = page_links(&doc, 2, &sizes);
         assert!(back.iter().any(|l| matches!(l.target, LinkTarget::Page(1, _))));
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn marks_the_right_line() {
+        // Líneas reales de la bibliografía de la demo: [3] y [4].
+        let lines = merge_lines(vec![(240.6, 254.8), (243.5, 253.1), (254.8, 254.8), (258.6, 272.7), (261.4, 271.0), (272.6, 286.7)]);
+        assert_eq!(lines, vec![(240.6, 254.8), (258.6, 272.7), (272.6, 286.7)]);
+        // El ancla de [4] está en 258.2, justo encima: se marca [4], no [3].
+        assert_eq!(marker_band(&lines, 258.2, MarkKind::Anchor), (258.6, 272.7));
+        // Una línea base dentro de [3] marca [3].
+        assert_eq!(marker_band(&lines, 252.0, MarkKind::Baseline), (240.6, 254.8));
     }
 
     #[test]
@@ -926,6 +983,61 @@ fn page_links(doc: &poppler::Document, index: i32, sizes: &[(f64, f64)]) -> Vec<
     out
 }
 
+/// Líneas de texto de la página como (arriba, abajo) en puntos desde arriba,
+/// a partir de los rectángulos de cada carácter (`poppler_page_get_text_layout`,
+/// que poppler-rs no expone).
+fn text_lines(page: &poppler::Page) -> Vec<(f64, f64)> {
+    use gtk::glib::translate::ToGlibPtr;
+    use poppler::ffi;
+
+    let mut rects: *mut ffi::PopplerRectangle = std::ptr::null_mut();
+    let mut n: std::os::raw::c_uint = 0;
+    // SAFETY: poppler reserva `rects` con g_malloc y nos pasa su propiedad.
+    let spans: Vec<(f64, f64)> = unsafe {
+        if ffi::poppler_page_get_text_layout(page.to_glib_none().0, &mut rects, &mut n) == 0 || rects.is_null() {
+            return Vec::new();
+        }
+        let spans = std::slice::from_raw_parts(rects, n as usize).iter().map(|r| (r.y1, r.y2)).collect();
+        glib::ffi::g_free(rects.cast());
+        spans
+    };
+    merge_lines(spans)
+}
+
+/// Junta los rectángulos de caracteres en líneas (se solapan en vertical).
+fn merge_lines(mut spans: Vec<(f64, f64)>) -> Vec<(f64, f64)> {
+    spans.retain(|(t, b)| b - t > 0.5);
+    spans.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut lines: Vec<(f64, f64)> = Vec::new();
+    for (t, b) in spans {
+        if let Some(last) = lines.last_mut() {
+            let overlap = last.1.min(b) - last.0.max(t);
+            if overlap > 0.5 * (b - t).min(last.1 - last.0) {
+                last.0 = last.0.min(t);
+                last.1 = last.1.max(b);
+                continue;
+            }
+        }
+        lines.push((t, b));
+    }
+    lines
+}
+
+/// Franja (arriba, abajo) a resaltar. Un ancla de enlace está justo encima de
+/// su línea: se marca la primera línea que empieza a su altura o debajo. Una
+/// línea base (SyncTeX) cae dentro de su línea. Sin datos, se estima.
+fn marker_band(lines: &[(f64, f64)], y: f64, kind: MarkKind) -> (f64, f64) {
+    let found = match kind {
+        MarkKind::Anchor => lines.iter().find(|(t, _)| *t >= y - 3.0),
+        MarkKind::Baseline => lines.iter().filter(|(t, b)| *t - 1.0 <= y && y <= *b + 2.0).min_by(|a, b| (a.1 - y).abs().total_cmp(&(b.1 - y).abs())),
+    };
+    match (found, kind) {
+        (Some(&(t, b)), _) => (t, b),
+        (None, MarkKind::Anchor) => (y, y + 12.0),
+        (None, MarkKind::Baseline) => (y - 10.0, y + 2.0),
+    }
+}
+
 /// Destino de un enlace interno: página (desde 0) y altura desde arriba.
 unsafe fn resolve_dest(doc: &poppler::Document, dest: *mut poppler::ffi::PopplerDest, sizes: &[(f64, f64)]) -> Option<LinkTarget> {
     use gtk::glib::translate::ToGlibPtr;
@@ -952,6 +1064,6 @@ unsafe fn resolve_dest(doc: &poppler::Document, dest: *mut poppler::ffi::Poppler
     let (page_num, top) = unsafe { ((*d).page_num, (*d).top) };
     let page = usize::try_from(page_num - 1).ok()?;
     let height = sizes.get(page)?.1;
-    let y = (top > 0.0 && top <= height).then(|| height - top);
+    let y = (top > 0.0 && top <= height).then_some(height - top);
     Some(LinkTarget::Page(page, y))
 }
