@@ -1,6 +1,7 @@
 //! Ventanas: pantalla de bienvenida y una ventana por proyecto.
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -224,6 +225,19 @@ enum Status {
     Error,
 }
 
+/// 12345 → "12.345".
+fn thousands(n: u64) -> String {
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i) % 3 == 0 {
+            out.push('.');
+        }
+        out.push(c);
+    }
+    out
+}
+
 /// `/home/u/tfm` → `~/tfm`.
 fn tilde(path: &Path) -> String {
     let home = glib::home_dir();
@@ -261,6 +275,7 @@ pub struct ProjectWindow {
     status: gtk::Label,
     issues_btn: gtk::ToggleButton,
     engine_label: gtk::Label,
+    words_label: gtk::Label,
     issues_revealer: gtk::Revealer,
     issues_list: gtk::ListBox,
     issues_stack: gtk::Stack,
@@ -394,10 +409,12 @@ impl ProjectWindow {
 
         // --- Barra de estado ---
         let engine_label = gtk::Label::new(None);
+        let words_label = gtk::Label::new(None);
         let statusbar = gtk::Box::builder().spacing(16).css_classes(["statusbar"]).build();
         statusbar.append(&editor.position_label);
         statusbar.append(&editor.vim_label);
         statusbar.append(&gtk::Box::builder().hexpand(true).build());
+        statusbar.append(&words_label);
         statusbar.append(&engine_label);
 
         let editor_col = gtk::Box::builder().orientation(gtk::Orientation::Vertical).css_classes(["editor-column"]).build();
@@ -452,6 +469,7 @@ impl ProjectWindow {
             status,
             issues_btn,
             engine_label,
+            words_label,
             issues_revealer,
             issues_list,
             issues_stack,
@@ -859,6 +877,16 @@ impl ProjectWindow {
         let errors = shown.iter().filter(|i| i.severity == Severity::Error).count();
         let warnings = shown.len() - errors;
         self.fill_issues(&shown);
+        let mut marks: HashMap<PathBuf, Vec<(u32, bool, String)>> = HashMap::new();
+        for i in &shown {
+            if let (Some(f), Some(l)) = (&i.file, i.line) {
+                marks.entry(f.clone()).or_default().push((l, i.severity == Severity::Error, i.message.clone()));
+            }
+        }
+        self.editor.set_issues(marks);
+        if outcome.pdf.is_some() {
+            self.update_word_count();
+        }
         *self.issues.borrow_mut() = shown;
         self.output.buffer().set_text(&outcome.output);
 
@@ -885,6 +913,17 @@ impl ProjectWindow {
         if pending {
             self.compile();
         }
+    }
+
+    fn update_word_count(self: &Rc<Self>) {
+        let p = self.project.borrow().clone();
+        let weak = Rc::downgrade(self);
+        glib::spawn_future_local(async move {
+            let words = compiler::word_count(p.root, p.main).await;
+            if let (Some(this), Some(n)) = (weak.upgrade(), words) {
+                this.words_label.set_label(&format!("{} palabras", thousands(n)));
+            }
+        });
     }
 
     fn set_status(&self, status: Status, text: &str) {

@@ -3,6 +3,7 @@
 //! búsqueda y modo Vim opcional.
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::rc::{Rc, Weak};
@@ -38,6 +39,10 @@ pub struct Editor {
     root: PathBuf,
     completion: LatexProvider,
     key_options: Rc<keys::Options>,
+    /// Problemas de la última compilación por archivo: (línea, es_error, mensaje).
+    issues: RefCell<HashMap<PathBuf, Vec<(u32, bool, String)>>>,
+    error_attrs: sourceview5::MarkAttributes,
+    warning_attrs: sourceview5::MarkAttributes,
     docs: RefCell<Vec<Doc>>,
     on_change: Callback,
     on_save: Callback,
@@ -84,6 +89,9 @@ impl Editor {
             stack,
             root,
             completion: LatexProvider::new(data),
+            issues: RefCell::default(),
+            error_attrs: sourceview5::MarkAttributes::builder().icon_name("dialog-error-symbolic").build(),
+            warning_attrs: sourceview5::MarkAttributes::builder().icon_name("dialog-warning-symbolic").build(),
             key_options: Rc::new(keys::Options { autopairs: Cell::new(config::get().autopairs), vim: Cell::new(config::get().vim) }),
             docs: RefCell::default(),
             on_change: RefCell::default(),
@@ -95,6 +103,7 @@ impl Editor {
             search_settings,
             search_ctx: RefCell::default(),
         });
+        editor.setup_marks();
         editor.connect_tabs();
         editor.connect_search();
         editor.update_empty();
@@ -249,6 +258,9 @@ impl Editor {
             .css_classes(["rutex-editor"])
             .build();
         keys::install(&view, self.key_options.clone());
+        view.set_show_line_marks(true);
+        view.set_mark_attributes(MARK_ERROR, &self.error_attrs, 10);
+        view.set_mark_attributes(MARK_WARNING, &self.warning_attrs, 5);
         if lang.is_some() {
             let completion = view.completion();
             completion.add_provider(&self.completion);
@@ -278,6 +290,7 @@ impl Editor {
         });
 
         let mut doc = Doc { rel: rel.to_path_buf(), buffer, view, page: page.clone(), mtime: mtime(&abs), vim: None };
+        self.apply_marks(&doc);
         if cfg.vim {
             self.attach_vim(&mut doc);
         }
@@ -373,6 +386,57 @@ impl Editor {
     pub fn refresh_scheme(&self) {
         for doc in self.docs.borrow().iter() {
             apply_scheme(&doc.buffer);
+        }
+        self.color_marks();
+    }
+
+    fn setup_marks(self: &Rc<Self>) {
+        for attrs in [&self.error_attrs, &self.warning_attrs] {
+            let weak = Rc::downgrade(self);
+            attrs.connect_query_tooltip_text(move |_, mark| {
+                let Some(this) = weak.upgrade() else { return String::new() };
+                let Some(buffer) = mark.buffer() else { return String::new() };
+                let line = buffer.iter_at_mark(mark).line() as u32 + 1;
+                let docs = this.docs.borrow();
+                let Some(doc) = docs.iter().find(|d| d.buffer.upcast_ref::<gtk::TextBuffer>() == &buffer) else { return String::new() };
+                let issues = this.issues.borrow();
+                issues.get(&doc.rel).into_iter().flatten().filter(|(l, _, _)| *l == line).map(|(_, _, m)| m.as_str()).collect::<Vec<_>>().join("\n")
+            });
+        }
+        self.color_marks();
+    }
+
+    /// Fondo suave de las líneas con problemas, con los colores del tema.
+    fn color_marks(&self) {
+        let (red, yellow) = match crate::theme::palette() {
+            Some(p) => (p.red, p.yellow),
+            None => ("#e01b24".to_string(), "#e5a50a".to_string()),
+        };
+        for (attrs, color) in [(&self.error_attrs, red), (&self.warning_attrs, yellow)] {
+            if let Ok(mut rgba) = gtk::gdk::RGBA::parse(&color) {
+                rgba.set_alpha(0.14);
+                attrs.set_background(&rgba);
+            }
+        }
+    }
+
+    /// Marca en el margen las líneas con errores y avisos de la última compilación.
+    pub fn set_issues(&self, issues: HashMap<PathBuf, Vec<(u32, bool, String)>>) {
+        *self.issues.borrow_mut() = issues;
+        for doc in self.docs.borrow().iter() {
+            self.apply_marks(doc);
+        }
+    }
+
+    fn apply_marks(&self, doc: &Doc) {
+        let (start, end) = doc.buffer.bounds();
+        doc.buffer.remove_source_marks(&start, &end, Some(MARK_ERROR));
+        doc.buffer.remove_source_marks(&start, &end, Some(MARK_WARNING));
+        let issues = self.issues.borrow();
+        for (line, is_error, _) in issues.get(&doc.rel).into_iter().flatten() {
+            if let Some(it) = doc.buffer.iter_at_line(line.saturating_sub(1) as i32) {
+                doc.buffer.create_source_mark(None, if *is_error { MARK_ERROR } else { MARK_WARNING }, &it);
+            }
         }
     }
 
@@ -510,6 +574,9 @@ impl Editor {
         }
     }
 }
+
+const MARK_ERROR: &str = "rutex-error";
+const MARK_WARNING: &str = "rutex-warning";
 
 fn update_position(buffer: &sourceview5::Buffer, label: &gtk::Label) {
     let it = buffer.iter_at_mark(&buffer.get_insert());

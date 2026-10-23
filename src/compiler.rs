@@ -183,6 +183,19 @@ impl Running {
     }
 }
 
+/// Palabras del documento entero (siguiendo \\input/\\include) con texcount.
+pub async fn word_count(root: PathBuf, main: PathBuf) -> Option<u64> {
+    gio::spawn_blocking(move || {
+        let out = command("texcount").current_dir(&root).args(["-inc", "-sum", "-1", "-utf8"]).arg(&main).output().ok()?;
+        let text = String::from_utf8_lossy(&out.stdout);
+        let first = text.lines().find(|l| l.trim().starts_with(|c: char| c.is_ascii_digit()))?;
+        first.trim().chars().take_while(char::is_ascii_digit).collect::<String>().parse().ok()
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
 fn tail(text: &str, max_lines: usize) -> String {
     let lines: Vec<&str> = text.lines().collect();
     lines[lines.len().saturating_sub(max_lines)..].join("\n")
