@@ -43,6 +43,7 @@ pub fn set_accels(app: &adw::Application) {
         ("win.zoom-out", &["<Ctrl>minus", "<Ctrl>KP_Subtract"]),
         ("win.zoom-fit", &["<Ctrl>0"]),
         ("win.toggle-sidebar", &["F9"]),
+        ("win.pdf-fullscreen", &["F11"]),
         ("win.toggle-issues", &["<Ctrl>e"]),
         ("win.show-files", &["<Ctrl><Shift>e"]),
         ("win.show-outline", &["<Ctrl><Shift>o"]),
@@ -144,7 +145,10 @@ fn apply_change(app: &adw::Application, change: Change) {
             }
             for_each_project(|pw| pw.editor.set_vim(on));
         }
-        Change::PdfDark => for_each_project(|pw| pw.pdf.refresh_colors()),
+        Change::PdfDark => for_each_project(|pw| {
+            pw.pdf.set_dark_button(config::get().pdf_dark);
+            pw.pdf.refresh_colors();
+        }),
         Change::Autocompile => {}
     }
 }
@@ -387,6 +391,10 @@ pub struct ProjectWindow {
     outline_list: gtk::ListBox,
     sections: adw::ToggleGroup,
     split: adw::OverlaySplitView,
+    toolbar: adw::ToolbarView,
+    editor_col: gtk::Box,
+    /// Modo «PDF en grande»: guarda si la barra lateral estaba visible.
+    pdf_full: Cell<Option<bool>>,
 }
 
 impl ProjectWindow {
@@ -544,6 +552,7 @@ impl ProjectWindow {
         let toolbar = adw::ToolbarView::new();
         toolbar.add_top_bar(&header);
         toolbar.set_content(Some(&toasts));
+        toolbar.set_top_bar_style(adw::ToolbarStyle::Flat);
 
         let window = adw::ApplicationWindow::builder()
             .application(app)
@@ -580,6 +589,9 @@ impl ProjectWindow {
             outline_list,
             sections,
             split,
+            toolbar,
+            editor_col,
+            pdf_full: Cell::new(None),
         });
 
         this.issues_btn.bind_property("active", &this.issues_revealer, "reveal-child").sync_create().build();
@@ -607,6 +619,39 @@ impl ProjectWindow {
                 this.schedule_autosave();
             }
         });
+        let weak = Rc::downgrade(self);
+        self.pdf.connect_dark_toggled(move |on| {
+            if weak.upgrade().is_some() {
+                config::update(|c| c.pdf_dark = on);
+                for_each_project(|pw| {
+                    pw.pdf.set_dark_button(on);
+                    pw.pdf.refresh_colors();
+                });
+            }
+        });
+        let weak = Rc::downgrade(self);
+        self.pdf.connect_fullscreen(move |_| {
+            if let Some(this) = weak.upgrade() {
+                this.toggle_pdf_fullscreen();
+            }
+        });
+        // Esc sale del modo «PDF en grande» (en captura: el foco puede estar en
+        // un widget oculto que se tragaría la tecla).
+        let esc = gtk::EventControllerKey::new();
+        esc.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let weak = Rc::downgrade(self);
+        esc.connect_key_pressed(move |_, key, _, _| {
+            if let Some(this) = weak.upgrade()
+                && key == gtk::gdk::Key::Escape
+                && this.pdf_full.get().is_some()
+            {
+                this.toggle_pdf_fullscreen();
+                return glib::Propagation::Stop;
+            }
+            glib::Propagation::Proceed
+        });
+        self.window.add_controller(esc);
+
         let weak = Rc::downgrade(self);
         self.editor.connect_issue_click(move |rel, line| {
             if let Some(this) = weak.upgrade() {
@@ -738,6 +783,7 @@ impl ProjectWindow {
         add("clean", Box::new(|t| t.clean()));
         add("show-files", Box::new(|t| t.show_sidebar("files")));
         add("show-outline", Box::new(|t| t.show_sidebar("outline")));
+        add("pdf-fullscreen", Box::new(|t| t.toggle_pdf_fullscreen()));
         add("close-tab", Box::new(|t| t.editor.close_current()));
         add("toggle-issues", Box::new(|t| t.issues_btn.set_active(!t.issues_revealer.reveals_child())));
         let btn = sidebar_btn.clone();
@@ -824,6 +870,28 @@ impl ProjectWindow {
                 *this.data.borrow_mut() = Data { index: idx, tex_files, images };
             }
         });
+    }
+
+    /// Pantalla completa solo con el PDF (F11 / Esc).
+    fn toggle_pdf_fullscreen(&self) {
+        match self.pdf_full.take() {
+            Some(sidebar) => {
+                self.window.unfullscreen();
+                self.toolbar.set_reveal_top_bars(true);
+                self.editor_col.set_visible(true);
+                self.split.set_show_sidebar(sidebar);
+                self.pdf.set_fullscreen_button(false);
+                self.editor.focus();
+            }
+            None => {
+                self.pdf_full.set(Some(self.split.shows_sidebar()));
+                self.split.set_show_sidebar(false);
+                self.editor_col.set_visible(false);
+                self.toolbar.set_reveal_top_bars(false);
+                self.window.fullscreen();
+                self.pdf.set_fullscreen_button(true);
+            }
+        }
     }
 
     fn show_sidebar(&self, name: &str) {

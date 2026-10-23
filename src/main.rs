@@ -53,6 +53,7 @@ fn main() -> glib::ExitCode {
     app.connect_shutdown(|_| {
         window::save_all_projects();
         compiler::kill_all();
+        pdf::shutdown_workers();
     });
     for signal in [libc::SIGTERM, libc::SIGINT, libc::SIGHUP] {
         let weak = app.downgrade();
@@ -64,5 +65,8 @@ fn main() -> glib::ExitCode {
         });
     }
 
-    app.run()
+    let code = app.run();
+    // Por si alguna ventana se cerró sin pasar por `shutdown`.
+    pdf::shutdown_workers();
+    code
 }

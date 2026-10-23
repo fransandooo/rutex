@@ -17,6 +17,20 @@ use gtk::{cairo, glib, graphene};
 
 use crate::synctex::PdfPos;
 
+/// Hilos de Poppler vivos. Hay que cerrarlos antes de salir: si el proceso
+/// termina con un hilo aún liberando su documento, los destructores globales de
+/// Poppler se ejecutan a la vez y el programa revienta (SIGSEGV en GlobalParams).
+static WORKERS: std::sync::Mutex<Vec<(async_channel::Sender<Req>, std::thread::JoinHandle<()>)>> = std::sync::Mutex::new(Vec::new());
+
+/// Cierra todos los hilos de PDF y espera a que suelten sus documentos.
+pub fn shutdown_workers() {
+    let workers = std::mem::take(&mut *WORKERS.lock().unwrap());
+    for (tx, handle) in workers {
+        tx.close();
+        let _ = handle.join();
+    }
+}
+
 const CACHE_LIMIT: usize = 128 * 1024 * 1024;
 const MARGIN: f64 = 16.0;
 const MAX_RENDER_WIDTH: i32 = 6000;
@@ -33,6 +47,7 @@ enum Resp {
 }
 
 type InverseCallback = RefCell<Option<Box<dyn Fn(PdfPos)>>>;
+type Callback<T> = RefCell<Option<Box<dyn Fn(T)>>>;
 
 /// Colores del modo oscuro (fondo, texto) en RGB, o `None` para el PDF original.
 type Colors = Option<[u8; 6]>;
@@ -100,6 +115,10 @@ pub struct PdfView {
     model: gtk::StringList,
     zoom_label: gtk::Label,
     page_label: gtk::Label,
+    dark_btn: gtk::ToggleButton,
+    full_btn: gtk::Button,
+    on_dark: Callback<bool>,
+    on_fullscreen: Callback<()>,
     state: RefCell<State>,
     tx: async_channel::Sender<Req>,
     on_inverse: InverseCallback,
@@ -110,10 +129,11 @@ impl PdfView {
     pub fn new() -> Rc<PdfView> {
         let (req_tx, req_rx) = async_channel::unbounded();
         let (resp_tx, resp_rx) = async_channel::unbounded();
-        std::thread::Builder::new()
+        let handle = std::thread::Builder::new()
             .name("rutex-pdf".into())
             .spawn(move || worker(req_rx, resp_tx))
             .expect("no se pudo crear el hilo del PDF");
+        WORKERS.lock().unwrap().push((req_tx.clone(), handle));
 
         let model = gtk::StringList::new(&[]);
         let factory = gtk::SignalListItemFactory::new();
@@ -154,6 +174,15 @@ impl PdfView {
         controls.append(&zoom_label);
         controls.append(&zoom_in);
         controls.append(&fit);
+        controls.append(&gtk::Separator::new(gtk::Orientation::Vertical));
+        let dark_btn = gtk::ToggleButton::builder()
+            .icon_name("weather-clear-night-symbolic")
+            .tooltip_text("PDF en modo oscuro")
+            .active(crate::config::get().pdf_dark)
+            .build();
+        let full_btn = gtk::Button::builder().icon_name("view-fullscreen-symbolic").tooltip_text("Ver el PDF en grande (F11)").build();
+        controls.append(&dark_btn);
+        controls.append(&full_btn);
 
         let widget = gtk::Overlay::builder().child(&stack).build();
         widget.add_overlay(&controls);
@@ -167,6 +196,10 @@ impl PdfView {
             model,
             zoom_label,
             page_label,
+            dark_btn,
+            full_btn,
+            on_dark: RefCell::default(),
+            on_fullscreen: RefCell::default(),
             state: RefCell::new(State { zoom: 1.0, colors: current_colors(), ..Default::default() }),
             tx: req_tx,
             on_inverse: RefCell::default(),
@@ -201,6 +234,23 @@ impl PdfView {
                     this.relayout();
                 }
             });
+        });
+
+        let weak = Rc::downgrade(&this);
+        this.dark_btn.connect_toggled(move |b| {
+            if let Some(this) = weak.upgrade()
+                && let Some(cb) = this.on_dark.borrow().as_ref()
+            {
+                cb(b.is_active());
+            }
+        });
+        let weak = Rc::downgrade(&this);
+        this.full_btn.connect_clicked(move |_| {
+            if let Some(this) = weak.upgrade()
+                && let Some(cb) = this.on_fullscreen.borrow().as_ref()
+            {
+                cb(());
+            }
         });
 
         let weak = Rc::downgrade(&this);
@@ -239,6 +289,28 @@ impl PdfView {
     /// Llamado al hacer doble clic en el PDF (búsqueda inversa).
     pub fn connect_inverse(&self, f: impl Fn(PdfPos) + 'static) {
         *self.on_inverse.borrow_mut() = Some(Box::new(f));
+    }
+
+    pub fn connect_dark_toggled(&self, f: impl Fn(bool) + 'static) {
+        *self.on_dark.borrow_mut() = Some(Box::new(f));
+    }
+
+    pub fn connect_fullscreen(&self, f: impl Fn(()) + 'static) {
+        *self.on_fullscreen.borrow_mut() = Some(Box::new(f));
+    }
+
+    /// Sincroniza el botón de modo oscuro sin volver a avisar.
+    pub fn set_dark_button(&self, on: bool) {
+        if self.dark_btn.is_active() != on {
+            let cb = self.on_dark.borrow_mut().take();
+            self.dark_btn.set_active(on);
+            *self.on_dark.borrow_mut() = cb;
+        }
+    }
+
+    pub fn set_fullscreen_button(&self, on: bool) {
+        self.full_btn.set_icon_name(if on { "view-restore-symbolic" } else { "view-fullscreen-symbolic" });
+        self.full_btn.set_tooltip_text(Some(if on { "Volver al editor (Esc)" } else { "Ver el PDF en grande (F11)" }));
     }
 
     pub fn has_document(&self) -> bool {
