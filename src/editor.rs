@@ -32,6 +32,7 @@ struct Doc {
     /// Text in the history version the margin bars compare against.
     baseline: Option<String>,
     diff_timer: Option<glib::SourceId>,
+    folds: Option<Rc<crate::fold::Folds>>,
 }
 
 type Callback = RefCell<Option<Box<dyn Fn()>>>;
@@ -208,6 +209,11 @@ impl Editor {
     fn current_doc<R>(&self, f: impl FnOnce(&Doc) -> R) -> Option<R> {
         let page = self.tab_view.selected_page()?;
         self.docs.borrow().iter().find(|d| d.page == page).map(f)
+    }
+
+    /// Folding in the current file (only LaTeX files have it).
+    pub fn folds(&self) -> Option<Rc<crate::fold::Folds>> {
+        self.current_doc(|d| d.folds.clone()).flatten()
     }
 
     pub fn current(&self) -> Option<PathBuf> {
@@ -429,7 +435,9 @@ impl Editor {
                 this.schedule_diff(&changed_rel);
             }
         });
-        let mut doc = Doc { rel: rel.to_path_buf(), buffer, view, page: page.clone(), mtime: mtime(&abs), vim: None, spell, bar, baseline: None, diff_timer: None };
+        // Folding arrows for LaTeX files.
+        let folds = (lang == Some("rutex-latex")).then(|| crate::fold::Folds::attach(&view));
+        let mut doc = Doc { rel: rel.to_path_buf(), buffer, view, page: page.clone(), mtime: mtime(&abs), vim: None, spell, bar, baseline: None, diff_timer: None, folds };
         self.apply_marks(&doc);
         if cfg.vim {
             self.attach_vim(&mut doc);
@@ -578,7 +586,7 @@ impl Editor {
             if !e.ends_line() {
                 e.forward_to_line_end();
             }
-            buffer.text(&line_start, &e, false).to_string()
+            buffer.text(&line_start, &e, true).to_string()
         };
         let indent: String = line_text.chars().take_while(|c| c.is_whitespace()).collect();
         if !iter.ends_line() {
@@ -632,7 +640,7 @@ impl Editor {
     fn tableize_paste(&self, buffer: &gtk::TextBuffer, start: i32) {
         let end = buffer.iter_at_mark(&buffer.get_insert());
         let mut s = buffer.iter_at_offset(start);
-        let pasted = buffer.text(&s, &end, false).to_string();
+        let pasted = buffer.text(&s, &end, true).to_string();
         if !pasted.contains('\t') {
             return;
         }
@@ -641,7 +649,7 @@ impl Editor {
         let booktabs = crate::insert::uses_package(&self.root, &main_src, "booktabs");
         let mut line_start = s;
         line_start.set_line_offset(0);
-        let indent: String = buffer.text(&line_start, &s, false).chars().take_while(|c| c.is_whitespace()).collect();
+        let indent: String = buffer.text(&line_start, &s, true).chars().take_while(|c| c.is_whitespace()).collect();
         let (table, caption) = crate::insert::table(&rows, booktabs, &indent);
         let mut e = end;
         buffer.begin_user_action();
@@ -676,7 +684,7 @@ impl Editor {
         let buffer = view.buffer();
         let offset = buffer.iter_at_mark(&buffer.get_insert()).offset();
         let (s, e) = buffer.bounds();
-        let in_math = crate::mathpreview::math_at(&buffer.text(&s, &e, false), offset as usize).is_some();
+        let in_math = crate::mathpreview::math_at(&buffer.text(&s, &e, true), offset as usize).is_some();
         let ends_in_letter = command.ends_with(|c: char| c.is_ascii_alphabetic());
         let body = if in_math && ends_in_letter { format!("{command} ") } else { command.to_string() };
         let caret = body.find("{}").map(|i| i + 1).or_else(|| body.contains(' ').then(|| body.find(' ').unwrap() + 1).filter(|_| !ends_in_letter)).unwrap_or(body.len());
@@ -717,7 +725,7 @@ impl Editor {
             return None;
         }
         let (s, e) = buffer.bounds();
-        let formula = crate::mathpreview::math_at(&buffer.text(&s, &e, false), iter.offset() as usize)?;
+        let formula = crate::mathpreview::math_at(&buffer.text(&s, &e, true), iter.offset() as usize)?;
         let color = match crate::theme::palette() {
             Some(p) => gtk::gdk::RGBA::parse(&p.fg).unwrap_or(gtk::gdk::RGBA::WHITE),
             None if adw::StyleManager::default().is_dark() => gtk::gdk::RGBA::WHITE,
@@ -751,7 +759,7 @@ impl Editor {
         }
         let mut end = *iter;
         end.forward_to_tag_toggle(Some(&tag));
-        let word = buffer.text(&start, &end, false).to_string();
+        let word = buffer.text(&start, &end, true).to_string();
         if word.trim().is_empty() {
             return None;
         }
@@ -811,7 +819,7 @@ impl Editor {
         if !end.ends_line() {
             end.forward_to_line_end();
         }
-        let line = buffer.text(&start, &end, false);
+        let line = buffer.text(&start, &end, true);
         crate::completion::key_at(&line, iter.line_offset() as usize)
     }
 
@@ -1092,7 +1100,7 @@ impl Editor {
             if let Some((s, e)) = buffer.selection_bounds()
                 && s.line() == e.line()
             {
-                self.search_entry.set_text(&buffer.text(&s, &e, false));
+                self.search_entry.set_text(&buffer.text(&s, &e, true));
             }
         }
         self.search_bar.set_search_mode(true);
@@ -1258,25 +1266,24 @@ mod tests {
     /// already borrowed" when the file had change bars (a baseline).
     #[test]
     fn reloads_external_changes() {
-        if gtk::init().is_err() || adw::init().is_err() {
-            return;
-        }
-        let dir = std::env::temp_dir().join(format!("rutex-reload-{}", std::process::id()));
-        fs::create_dir_all(&dir).unwrap();
-        fs::write(dir.join("a.tex"), "one\n").unwrap();
-        let editor = Editor::new(dir.clone(), Default::default());
-        editor.open(Path::new("a.tex")).unwrap();
-        editor.set_baseline(Path::new("a.tex"), Some("zero\n".into()));
-        std::thread::sleep(std::time::Duration::from_millis(20));
-        fs::write(dir.join("a.tex"), "one\ntwo\n").unwrap();
-        // Make sure the mtime differs even on coarse filesystems.
-        let later = std::time::SystemTime::now() + std::time::Duration::from_secs(2);
-        fs::File::options().write(true).open(dir.join("a.tex")).unwrap().set_modified(later).unwrap();
-        assert!(editor.reload_external());
-        let view = editor.current_view().unwrap();
-        let (s, e) = view.buffer().bounds();
-        assert_eq!(view.buffer().text(&s, &e, false), "one\ntwo\n");
-        fs::remove_dir_all(dir).unwrap();
+        crate::testutil::with_gtk(|| {
+            let dir = std::env::temp_dir().join(format!("rutex-reload-{}", std::process::id()));
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(dir.join("a.tex"), "one\n").unwrap();
+            let editor = Editor::new(dir.clone(), Default::default());
+            editor.open(Path::new("a.tex")).unwrap();
+            editor.set_baseline(Path::new("a.tex"), Some("zero\n".into()));
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            fs::write(dir.join("a.tex"), "one\ntwo\n").unwrap();
+            // Make sure the mtime differs even on coarse filesystems.
+            let later = std::time::SystemTime::now() + std::time::Duration::from_secs(2);
+            fs::File::options().write(true).open(dir.join("a.tex")).unwrap().set_modified(later).unwrap();
+            assert!(editor.reload_external());
+            let view = editor.current_view().unwrap();
+            let (s, e) = view.buffer().bounds();
+            assert_eq!(view.buffer().text(&s, &e, true), "one\ntwo\n");
+            fs::remove_dir_all(dir).unwrap();
+        });
     }
 
     #[test]

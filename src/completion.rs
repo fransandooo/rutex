@@ -423,7 +423,7 @@ fn context_at(context: &sourceview5::CompletionContext) -> Option<Context> {
     let end = buffer.iter_at_mark(&buffer.get_insert());
     let mut start = end;
     start.set_line_offset(0);
-    analyze(&buffer.text(&start, &end, false))
+    analyze(&buffer.text(&start, &end, true))
 }
 
 fn proposals(ctx: &Context, data: Option<&SharedData>, context: &sourceview5::CompletionContext) -> Vec<LatexProposal> {
@@ -462,7 +462,7 @@ fn proposals(ctx: &Context, data: Option<&SharedData>, context: &sourceview5::Co
                 // Las del buffer actual, aunque aún no estén guardadas.
                 if let Some(b) = context.buffer() {
                     let (s, e) = b.bounds();
-                    for call in b.text(&s, &e, false).lines().flat_map(|l| crate::index::calls(l).into_iter().map(|c| (c.name.to_string(), c.arg.map(str::to_string))).collect::<Vec<_>>()) {
+                    for call in b.text(&s, &e, true).lines().flat_map(|l| crate::index::calls(l).into_iter().map(|c| (c.name.to_string(), c.arg.map(str::to_string))).collect::<Vec<_>>()) {
                         if let ("label", Some(name)) = (call.0.as_str(), call.1) {
                             if !labels.iter().any(|(n, _)| *n == name) {
                                 labels.push((name, tr("this file").into()));
@@ -536,7 +536,7 @@ pub fn key_at(line: &str, col: usize) -> Option<KeyAt> {
 /// Último `\begin{x}` sin su `\end{x}` antes del cursor.
 fn open_environment(buffer: &sourceview5::Buffer) -> Option<String> {
     let end = buffer.iter_at_mark(&buffer.get_insert());
-    let text = buffer.text(&buffer.start_iter(), &end, false);
+    let text = buffer.text(&buffer.start_iter(), &end, true);
     let mut stack: Vec<String> = Vec::new();
     for line in text.lines() {
         for call in crate::index::calls(crate::project::strip_comment(line)) {

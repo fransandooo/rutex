@@ -592,6 +592,10 @@ const TABLE: &[(&str, &str)] = &[
     ("Claude is busy right now. Try again in a moment.", "Claude está saturado ahora mismo. Inténtalo en un momento."),
     ("Could not connect. Check your internet connection.", "No se pudo conectar. Revisa tu conexión a internet."),
     ("Request failed (HTTP {})", "La petición falló (HTTP {})"),
+    ("Fold section", "Plegar sección"),
+    ("Unfold section", "Desplegar sección"),
+    ("Fold all sections", "Plegar todas las secciones"),
+    ("Unfold everything", "Desplegar todo"),
 ];
 
 #[cfg(test)]

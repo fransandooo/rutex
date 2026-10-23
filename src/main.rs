@@ -9,6 +9,7 @@ mod editor;
 mod explain;
 mod export;
 mod filetree;
+mod fold;
 mod history;
 mod historyview;
 mod hover;
@@ -31,6 +32,8 @@ mod symbols;
 mod synctex;
 mod tabs;
 mod templates;
+#[cfg(test)]
+mod testutil;
 mod theme;
 mod ui;
 mod window;

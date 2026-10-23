@@ -74,7 +74,7 @@ fn wrap(buffer: &gtk::TextBuffer, prefix: &str, suffix: &str) -> bool {
     buffer.begin_user_action();
     let pre = prefix.chars().count() as i32;
     if let Some((mut s, mut e)) = buffer.selection_bounds() {
-        let text = buffer.text(&s, &e, false).to_string();
+        let text = buffer.text(&s, &e, true).to_string();
         let start = s.offset();
         buffer.delete(&mut s, &mut e);
         buffer.insert(&mut s, &format!("{prefix}{text}{suffix}"));
@@ -111,7 +111,7 @@ fn line_text(buffer: &gtk::TextBuffer, line: i32) -> String {
     if !end.ends_line() {
         end.forward_to_line_end();
     }
-    buffer.text(&start, &end, false).to_string()
+    buffer.text(&start, &end, true).to_string()
 }
 
 /// Comenta o descomenta (`% `) las líneas seleccionadas.
@@ -146,7 +146,7 @@ fn toggle_comment(buffer: &gtk::TextBuffer) -> bool {
 fn duplicate(buffer: &gtk::TextBuffer) -> bool {
     buffer.begin_user_action();
     if let Some((s, mut e)) = buffer.selection_bounds() {
-        let text = buffer.text(&s, &e, false).to_string();
+        let text = buffer.text(&s, &e, true).to_string();
         buffer.insert(&mut e, &text);
     } else {
         let line = cursor(buffer).line();
@@ -190,15 +190,15 @@ fn close_environment(buffer: &gtk::TextBuffer) -> bool {
     if !line_end.ends_line() {
         line_end.forward_to_line_end();
     }
-    if !buffer.text(&it, &line_end, false).trim().is_empty() {
+    if !buffer.text(&it, &line_end, true).trim().is_empty() {
         return false;
     }
-    let before = buffer.text(&line_start, &it, false).to_string();
+    let before = buffer.text(&line_start, &it, true).to_string();
     let Some(env) = begun_environment(&before) else { return false };
 
     // Solo si en el documento hay más \begin{env} que \end{env}.
     let (s, e) = buffer.bounds();
-    let all = buffer.text(&s, &e, false);
+    let all = buffer.text(&s, &e, true);
     let opens = all.matches(&format!("\\begin{{{env}}}")).count();
     let closes = all.matches(&format!("\\end{{{env}}}")).count();
     if closes >= opens {
@@ -267,7 +267,7 @@ fn expand_trigger(view: &sourceview5::View) -> bool {
     let it = cursor(&buffer);
     let mut start = it;
     start.set_line_offset(0);
-    let before = buffer.text(&start, &it, false).to_string();
+    let before = buffer.text(&start, &it, true).to_string();
     let word: String = before.chars().rev().take_while(|c| c.is_ascii_uppercase()).collect::<Vec<_>>().into_iter().rev().collect();
     let rest = &before[..before.len() - word.len()];
     if !(rest.is_empty() || rest.ends_with(char::is_whitespace)) {
@@ -288,7 +288,7 @@ fn at_snippet(buffer: &gtk::TextBuffer, keyval: gdk::Key) -> bool {
         return false;
     }
     let (s, e) = buffer.bounds();
-    if crate::mathpreview::math_at(&buffer.text(&s, &e, false), it.offset() as usize).is_none() {
+    if crate::mathpreview::math_at(&buffer.text(&s, &e, true), it.offset() as usize).is_none() {
         return false;
     }
     let Some(view) = buffer_view(buffer) else { return false };
@@ -393,83 +393,81 @@ mod tests {
     /// Prueba las ediciones sobre un GtkTextBuffer real (se salta si no hay display).
     #[test]
     fn buffer_edits() {
-        if gtk::init().is_err() {
-            return;
-        }
-        let buf = gtk::TextBuffer::new(None);
-        let set = |text: &str, cursor: i32| {
-            buf.set_text(text);
-            buf.place_cursor(&buf.iter_at_offset(cursor));
-        };
-        let text = || {
-            let (s, e) = buf.bounds();
-            buf.text(&s, &e, false).to_string()
-        };
+        crate::testutil::with_gtk(|| {
+            let buf = gtk::TextBuffer::new(None);
+            let set = |text: &str, cursor: i32| {
+                buf.set_text(text);
+                buf.place_cursor(&buf.iter_at_offset(cursor));
+            };
+            let text = || {
+                let (s, e) = buf.bounds();
+                buf.text(&s, &e, true).to_string()
+            };
 
-        set("a\nb", 0);
-        toggle_comment(&buf);
-        assert_eq!(text(), "% a\nb");
-        toggle_comment(&buf);
-        assert_eq!(text(), "a\nb");
+            set("a\nb", 0);
+            toggle_comment(&buf);
+            assert_eq!(text(), "% a\nb");
+            toggle_comment(&buf);
+            assert_eq!(text(), "a\nb");
 
-        set("hola", 0);
-        buf.select_range(&buf.iter_at_offset(0), &buf.iter_at_offset(4));
-        wrap(&buf, "\\textbf{", "}");
-        assert_eq!(text(), "\\textbf{hola}");
+            set("hola", 0);
+            buf.select_range(&buf.iter_at_offset(0), &buf.iter_at_offset(4));
+            wrap(&buf, "\\textbf{", "}");
+            assert_eq!(text(), "\\textbf{hola}");
 
-        set("uno\ndos", 1);
-        duplicate(&buf);
-        assert_eq!(text(), "uno\nuno\ndos");
-        delete_lines(&buf);
-        assert_eq!(text(), "uno\ndos");
+            set("uno\ndos", 1);
+            duplicate(&buf);
+            assert_eq!(text(), "uno\nuno\ndos");
+            delete_lines(&buf);
+            assert_eq!(text(), "uno\ndos");
 
-        set("  \\begin{itemize}", 17);
-        assert!(close_environment(&buf));
-        assert_eq!(text(), "  \\begin{itemize}\n    \n  \\end{itemize}");
-        assert_eq!(cursor(&buf).line(), 1);
+            set("  \\begin{itemize}", 17);
+            assert!(close_environment(&buf));
+            assert_eq!(text(), "  \\begin{itemize}\n    \n  \\end{itemize}");
+            assert_eq!(cursor(&buf).line(), 1);
 
-        set("x ", 2);
-        autopair(&buf, gdk::Key::braceleft);
-        assert_eq!(text(), "x {}");
-        autopair(&buf, gdk::Key::braceright);
-        assert_eq!(cursor(&buf).offset(), 4);
-        set("x {}", 3);
-        autopair(&buf, gdk::Key::BackSpace);
-        assert_eq!(text(), "x ");
-        set("50", 2);
-        assert!(!autopair(&buf, gdk::Key::dollar));
+            set("x ", 2);
+            autopair(&buf, gdk::Key::braceleft);
+            assert_eq!(text(), "x {}");
+            autopair(&buf, gdk::Key::braceright);
+            assert_eq!(cursor(&buf).offset(), 4);
+            set("x {}", 3);
+            autopair(&buf, gdk::Key::BackSpace);
+            assert_eq!(text(), "x ");
+            set("50", 2);
+            assert!(!autopair(&buf, gdk::Key::dollar));
+        });
     }
 
     /// Snippets on a real view: `BEQ` + Tab and `@a` inside a formula.
     #[test]
     fn snippets() {
-        if gtk::init().is_err() {
-            return;
-        }
-        let buffer = sourceview5::Buffer::new(None);
-        let view = sourceview5::View::with_buffer(&buffer);
-        install(&view, Rc::new(Options::default()));
-        let text = || {
-            let (s, e) = buffer.bounds();
-            buffer.text(&s, &e, false).to_string()
-        };
+        crate::testutil::with_gtk(|| {
+            let buffer = sourceview5::Buffer::new(None);
+            let view = sourceview5::View::with_buffer(&buffer);
+            install(&view, Rc::new(Options::default()));
+            let text = || {
+                let (s, e) = buffer.bounds();
+                buffer.text(&s, &e, true).to_string()
+            };
 
-        buffer.set_text("BEQ");
-        buffer.place_cursor(&buffer.end_iter());
-        assert!(expand_trigger(&view));
-        assert!(text().starts_with("\\begin{equation}\n"), "{}", text());
+            buffer.set_text("BEQ");
+            buffer.place_cursor(&buffer.end_iter());
+            assert!(expand_trigger(&view));
+            assert!(text().starts_with("\\begin{equation}\n"), "{}", text());
 
-        buffer.set_text("so BITE");
-        buffer.place_cursor(&buffer.end_iter());
-        assert!(!expand_trigger(&view), "only exact triggers");
+            buffer.set_text("so BITE");
+            buffer.place_cursor(&buffer.end_iter());
+            assert!(!expand_trigger(&view), "only exact triggers");
 
-        buffer.set_text("$x = @$");
-        buffer.place_cursor(&buffer.iter_at_offset(6));
-        assert!(at_snippet(buffer.upcast_ref(), gdk::Key::a));
-        assert_eq!(text(), "$x = \\alpha $");
+            buffer.set_text("$x = @$");
+            buffer.place_cursor(&buffer.iter_at_offset(6));
+            assert!(at_snippet(buffer.upcast_ref(), gdk::Key::a));
+            assert_eq!(text(), "$x = \\alpha $");
 
-        buffer.set_text("mail me@a");
-        buffer.place_cursor(&buffer.end_iter());
-        assert!(!at_snippet(buffer.upcast_ref(), gdk::Key::b), "not outside formulas");
+            buffer.set_text("mail me@a");
+            buffer.place_cursor(&buffer.end_iter());
+            assert!(!at_snippet(buffer.upcast_ref(), gdk::Key::b), "not outside formulas");
+        });
     }
 }

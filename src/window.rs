@@ -46,6 +46,10 @@ pub fn set_accels(app: &adw::Application) {
         ("win.history", &["<Ctrl><Shift>h"]),
         ("win.check", &["<Ctrl><Shift>r"]),
         ("win.symbols", &["<Ctrl><Shift>m"]),
+        ("win.fold", &["<Alt>minus", "<Alt>KP_Subtract"]),
+        ("win.unfold", &["<Alt>plus", "<Alt>equal", "<Alt>KP_Add"]),
+        ("win.fold-all", &["<Ctrl><Alt>minus"]),
+        ("win.unfold-all", &["<Ctrl><Alt>plus", "<Ctrl><Alt>equal"]),
         ("win.save-version", &["<Ctrl><Shift>s"]),
         ("win.zoom-in", &["<Ctrl>plus", "<Ctrl>equal", "<Ctrl>KP_Add"]),
         ("win.zoom-out", &["<Ctrl>minus", "<Ctrl>KP_Subtract"]),
@@ -572,6 +576,10 @@ impl ProjectWindow {
         ]);
         let view = gio::Menu::new();
         view.append_submenu(Some(tr("Theme")), &theme_menu());
+        view.append(Some(tr("Fold section")), Some("win.fold"));
+        view.append(Some(tr("Unfold section")), Some("win.unfold"));
+        view.append(Some(tr("Fold all sections")), Some("win.fold-all"));
+        view.append(Some(tr("Unfold everything")), Some("win.unfold-all"));
         view.append(Some(tr("Check spelling")), Some("app.spellcheck"));
         view.append(Some(tr("Vim mode")), Some("app.vim"));
         menu.append_section(Some(tr("View")), &view);
@@ -1083,6 +1091,10 @@ impl ProjectWindow {
         }));
         add("export-pdf", Box::new(|t| t.export_pdf()));
         add("export-docx", Box::new(|t| t.export_docx()));
+        add("fold", Box::new(|t| t.editor.folds().iter().for_each(|f| f.fold_at_cursor())));
+        add("unfold", Box::new(|t| t.editor.folds().iter().for_each(|f| f.unfold_at_cursor())));
+        add("fold-all", Box::new(|t| t.editor.folds().iter().for_each(|f| f.fold_all())));
+        add("unfold-all", Box::new(|t| t.editor.folds().iter().for_each(|f| f.unfold_all())));
         add("open-pdf", Box::new(|t| t.open_pdf_external()));
         add("clean", Box::new(|t| t.clean()));
         add("show-files", Box::new(|t| t.show_sidebar("files")));
@@ -1222,7 +1234,7 @@ impl ProjectWindow {
             if let Some((s, e)) = buffer.selection_bounds()
                 && s.line() == e.line()
             {
-                self.search.entry.set_text(&buffer.text(&s, &e, false));
+                self.search.entry.set_text(&buffer.text(&s, &e, true));
             }
         }
         self.search.entry.grab_focus();
@@ -1257,7 +1269,7 @@ impl ProjectWindow {
                         let line_text = {
                             let mut end = start;
                             end.forward_to_line_end();
-                            buffer.text(&start, &end, false).to_string()
+                            buffer.text(&start, &end, true).to_string()
                         };
                         let shown: String = hit.text.chars().take(hit.col + hit.len).collect();
                         let offset = line_text.find(&shown).map(|b| line_text[..b].chars().count()).unwrap_or(0) + hit.col;

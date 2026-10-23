@@ -41,6 +41,8 @@ The interface is in English by default, and Spanish is available in Preferences.
   CSV.
 - **References by DOI or arXiv id**: paste it, and the entry is added to your `.bib` and cited.
   **Zotero** (with Better BibTeX) works too.
+- **Folding**: an arrow in the margin folds a chapter, section or environment (`Alt+-` / `Alt++`,
+  `Ctrl+Alt+-` folds every section). Folded text is only hidden; going to a line inside it opens it.
 - **Errors explained in plain words**: hovering an error shows what it means and how to fix it,
   for the ~40 most common LaTeX errors and warnings, offline. Optionally, with your own Anthropic
   API key (Preferences → AI help), an "Ask Claude" button in the problems list explains any error
@@ -187,6 +189,7 @@ Press `Ctrl+?` inside the app to see them all.
 | `Ctrl+D` / `Ctrl+Shift+K` / `Alt+↑↓` | Duplicate / delete / move lines |
 | `Ctrl+Space` | Show suggestions |
 | `Ctrl+N` / `Ctrl+Shift+N` | New file / new project |
+| `Alt+-` / `Alt++` | Fold / unfold the section or environment at the cursor |
 | `Ctrl+Alt+N` | New window (launching rutex again does the same) |
 | `Ctrl+Shift+E` / `Ctrl+Shift+O` / `F9` | Files / outline / toggle sidebar |
 | `Ctrl+E` | Problems panel |
