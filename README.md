@@ -41,6 +41,10 @@ The interface is in English by default, and Spanish is available in Preferences.
   CSV.
 - **References by DOI or arXiv id**: paste it, and the entry is added to your `.bib` and cited.
   **Zotero** (with Better BibTeX) works too.
+- **Errors explained in plain words**: hovering an error shows what it means and how to fix it,
+  for the ~40 most common LaTeX errors and warnings, offline. Optionally, with your own Anthropic
+  API key (Preferences → AI help), an "Ask Claude" button in the problems list explains any error
+  using the lines around it. Off by default; nothing is sent unless you press the button.
 - **Export to Word** (☰ → Export to Word): for supervisors who review in Word. Equations become real Word
   equations, references keep their numbers, and TikZ drawings, plots, Gantt charts and pseudocode
   are inserted as images. Needs `pandoc` (`sudo pacman -S pandoc-cli`).

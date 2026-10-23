@@ -117,7 +117,13 @@ pub fn issues_bubble(issues: &[(bool, String)]) -> gtk::Box {
         if issues.len() > 1 {
             row.append(&gtk::Image::builder().icon_name(if *is_error { "dialog-error-symbolic" } else { "dialog-warning-symbolic" }).valign(gtk::Align::Start).build());
         }
-        row.append(&text(msg));
+        let col = gtk::Box::builder().orientation(gtk::Orientation::Vertical).spacing(4).build();
+        col.append(&text(msg));
+        if let Some((what, fix)) = crate::explain::explain(msg) {
+            col.append(&gtk::Label::builder().label(what).xalign(0.0).wrap(true).max_width_chars(52).css_classes(["bubble-explain"]).build());
+            col.append(&gtk::Label::builder().label(crate::i18n::trf("How to fix: {}", &[&fix])).xalign(0.0).wrap(true).max_width_chars(52).css_classes(["bubble-fix"]).build());
+        }
+        row.append(&col);
         body.append(&row);
     }
     card.append(&footer(tr("Click the margin icon to see the problems list")));

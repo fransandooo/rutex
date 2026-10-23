@@ -54,6 +54,8 @@ pub struct Config {
     pub compile_delay_ms: u32,
     pub pdf_dark: bool,
     pub spellcheck: bool,
+    /// Lets the problems list send an error and the lines around it to Claude.
+    pub ai_help: bool,
     /// "auto" (from the document) or a dictionary code such as "es_ES".
     pub spell_lang: String,
     pub recent: Vec<PathBuf>,
@@ -76,6 +78,7 @@ impl Default for Config {
             compile_delay_ms: 800,
             pdf_dark: false,
             spellcheck: true,
+            ai_help: false,
             spell_lang: "auto".to_string(),
             recent: Vec::new(),
             mains: Vec::new(),
@@ -106,6 +109,7 @@ impl Config {
                 "compile_delay_ms" => cfg.compile_delay_ms = v.trim().parse().unwrap_or(cfg.compile_delay_ms).clamp(200, 10_000),
                 "pdf_dark" => cfg.pdf_dark = flag,
                 "spellcheck" => cfg.spellcheck = flag,
+                "ai_help" => cfg.ai_help = flag,
                 "spell_lang" => cfg.spell_lang = v.trim().to_string(),
                 "recent" => cfg.recent.push(v.into()),
                 "goal" => {
@@ -139,6 +143,7 @@ impl Config {
         out.push_str(&format!("compile_delay_ms={}\n", self.compile_delay_ms));
         out.push_str(&format!("pdf_dark={}\n", self.pdf_dark));
         out.push_str(&format!("spellcheck={}\n", self.spellcheck));
+        out.push_str(&format!("ai_help={}\n", self.ai_help));
         out.push_str(&format!("spell_lang={}\n", self.spell_lang));
         for r in &self.recent {
             out.push_str(&format!("recent={}\n", r.display()));

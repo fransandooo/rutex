@@ -1,3 +1,4 @@
+mod ai;
 mod changebar;
 mod check;
 mod compiler;
@@ -5,6 +6,7 @@ mod completion;
 mod config;
 mod demo;
 mod editor;
+mod explain;
 mod export;
 mod filetree;
 mod history;

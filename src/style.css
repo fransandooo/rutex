@@ -400,6 +400,14 @@ GtkSourceHoverDisplay > box > .bubble + .bubble,
 .bubble-text {
   line-height: 1.35;
 }
+.bubble-explain {
+  opacity: 0.8;
+}
+.bubble-fix {
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent-bg-color) 14%, transparent);
+}
 .bubble-foot {
   margin-top: 2px;
   font-size: 0.85em;
@@ -431,4 +439,14 @@ button.symbol {
   min-height: 36px;
   font-size: 1.25em;
   padding: 0 4px;
+}
+
+/* ---------- Ayuda de errores (lista de problemas) ---------- */
+.issue-help {
+  padding: 14px;
+}
+.issue-help .ai-answer {
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--window-fg-color) 6%, transparent);
 }
