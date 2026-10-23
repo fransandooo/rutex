@@ -26,7 +26,6 @@ pub struct Editor {
     root: RefCell<PathBuf>,
     docs: RefCell<HashMap<PathBuf, Doc>>,
     current: RefCell<Option<PathBuf>>,
-    dark: std::cell::Cell<bool>,
     on_change: Callback,
     on_save: Callback,
     vim: RefCell<Option<(gtk::EventControllerKey, sourceview5::VimIMContext)>>,
@@ -78,7 +77,6 @@ impl Editor {
             root: RefCell::new(root),
             docs: RefCell::default(),
             current: RefCell::default(),
-            dark: std::cell::Cell::new(adw::StyleManager::default().is_dark()),
             on_change: RefCell::default(),
             on_save: RefCell::default(),
             vim: RefCell::default(),
@@ -228,16 +226,16 @@ impl Editor {
         Ok(())
     }
 
-    pub fn set_dark(&self, dark: bool) {
-        self.dark.set(dark);
+    /// Vuelve a aplicar el esquema de colores (cambio de tema).
+    pub fn refresh_scheme(&self) {
         for doc in self.docs.borrow().values() {
             self.apply_scheme(&doc.buffer);
         }
     }
 
     fn apply_scheme(&self, buffer: &sourceview5::Buffer) {
-        let id = if self.dark.get() { "Adwaita-dark" } else { "Adwaita" };
-        buffer.set_style_scheme(sourceview5::StyleSchemeManager::default().scheme(id).as_ref());
+        let id = crate::theme::scheme_id();
+        buffer.set_style_scheme(sourceview5::StyleSchemeManager::default().scheme(&id).as_ref());
     }
 
     pub fn set_vim(self: &Rc<Self>, enabled: bool) {

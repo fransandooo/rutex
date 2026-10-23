@@ -10,7 +10,7 @@ use adw::prelude::*;
 use gtk::{gio, glib};
 
 use crate::compiler::{self, Outcome};
-use crate::config;
+use crate::config::{self, ThemeMode};
 use crate::editor::Editor;
 use crate::logparse::Severity;
 use crate::pdf::PdfView;
@@ -66,10 +66,17 @@ pub fn setup_app_actions(app: &adw::Application) {
     });
     app.add_action(&vim);
 
-    adw::StyleManager::default().connect_dark_notify(|sm| {
-        let dark = sm.is_dark();
-        for_each_project(|pw| pw.editor.set_dark(dark));
+    let theme = gio::SimpleAction::new_stateful("theme", Some(glib::VariantTy::STRING), &config::get().theme.id().to_variant());
+    theme.connect_activate(|action, param| {
+        let Some(id) = param.and_then(|p| p.get::<String>()) else { return };
+        let Some(mode) = ThemeMode::ALL.into_iter().find(|m| m.id() == id) else { return };
+        action.set_state(&id.to_variant());
+        config::update(|c| c.theme = mode);
+        crate::theme::apply();
     });
+    app.add_action(&theme);
+
+    crate::theme::connect_changed(|| for_each_project(|pw| pw.editor.refresh_scheme()));
 }
 
 fn for_each_project(f: impl Fn(&Rc<ProjectWindow>)) {
@@ -269,6 +276,13 @@ impl ProjectWindow {
         s2.append(Some("Limpiar archivos auxiliares"), Some("win.clean"));
         menu.append_section(None, &s2);
         let s3 = gio::Menu::new();
+        let themes = gio::Menu::new();
+        for mode in ThemeMode::ALL {
+            let item = gio::MenuItem::new(Some(mode.label()), None);
+            item.set_action_and_target_value(Some("app.theme"), Some(&mode.id().to_variant()));
+            themes.append_item(&item);
+        }
+        s3.append_submenu(Some("Tema"), &themes);
         s3.append(Some("Modo Vim"), Some("app.vim"));
         menu.append_section(None, &s3);
         let menu_btn = gtk::MenuButton::builder().icon_name("open-menu-symbolic").menu_model(&menu).primary(true).build();

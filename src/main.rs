@@ -5,6 +5,7 @@ mod logparse;
 mod pdf;
 mod project;
 mod synctex;
+mod theme;
 mod window;
 
 use adw::prelude::*;
@@ -13,9 +14,8 @@ use gtk::{gio, glib};
 const APP_ID: &str = "dev.fran.Rutex";
 
 const CSS: &str = "
-.rutex-editor { font-size: 11pt; }
 .vim-bar { padding: 2px 8px; font-size: 10pt; }
-.pdf-view { background-color: shade(@window_bg_color, 0.82); }
+.pdf-view { background-color: var(--rutex-pdf-bg, shade(@window_bg_color, 0.82)); }
 .pdf-view > row { padding: 8px 0; background: none; }
 .pdf-view > row:hover, .pdf-view > row:selected { background: none; }
 .pdf-page { box-shadow: 0 1px 5px alpha(black, 0.35); }
@@ -39,6 +39,7 @@ fn main() -> glib::ExitCode {
             &provider,
             gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
         );
+        theme::init();
         window::setup_app_actions(app);
         window::set_accels(app);
     });
