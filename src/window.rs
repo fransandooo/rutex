@@ -18,6 +18,7 @@ use crate::completion::{Data, SharedData};
 use crate::index::{self, Section};
 use crate::logparse::Severity;
 use crate::pdf::PdfView;
+use crate::quickopen;
 use crate::project::Project;
 use crate::synctex;
 
@@ -37,6 +38,7 @@ pub fn set_accels(app: &adw::Application) {
         ("win.find", &["<Ctrl>f"]),
         ("win.forward-sync", &["<Ctrl>j"]),
         ("win.goto-line", &["<Ctrl>g"]),
+        ("win.quick-open", &["<Ctrl>p"]),
         ("win.zoom-in", &["<Ctrl>plus", "<Ctrl>equal", "<Ctrl>KP_Add"]),
         ("win.zoom-out", &["<Ctrl>minus", "<Ctrl>KP_Subtract"]),
         ("win.zoom-fit", &["<Ctrl>0"]),
@@ -617,6 +619,7 @@ impl ProjectWindow {
         add("find", Box::new(|t| t.editor.find()));
         add("forward-sync", Box::new(|t| t.forward_sync()));
         add("goto-line", Box::new(|t| t.goto_line_dialog()));
+        add("quick-open", Box::new(|t| t.quick_open()));
         add("zoom-in", Box::new(|t| t.pdf.zoom(1)));
         add("zoom-out", Box::new(|t| t.pdf.zoom(-1)));
         add("zoom-fit", Box::new(|t| t.pdf.zoom(0)));
@@ -995,6 +998,19 @@ impl ProjectWindow {
             match pos {
                 Some(pos) => this.pdf.reveal(pos),
                 None => this.toast("SyncTeX no encontró esa línea en el PDF"),
+            }
+        });
+    }
+
+    fn quick_open(self: &Rc<Self>) {
+        let files = self.project.borrow().files.clone();
+        let sections = self.data.borrow().index.outline.clone();
+        let weak = Rc::downgrade(self);
+        quickopen::show(&self.window, files, sections, move |target| {
+            let Some(this) = weak.upgrade() else { return };
+            match target {
+                quickopen::Target::File(rel) => this.open_path(&rel),
+                quickopen::Target::Section(rel, line) => this.goto(&rel, line),
             }
         });
     }

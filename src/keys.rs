@@ -39,6 +39,7 @@ pub fn install(view: &sourceview5::View, options: Rc<Options>) {
                 // Atajos de la ventana que GtkTextView podría quedarse.
                 gdk::Key::g if !shift => view.activate_action("win.goto-line", None).is_ok(),
                 gdk::Key::j if !shift => view.activate_action("win.forward-sync", None).is_ok(),
+                gdk::Key::p if !shift => view.activate_action("win.quick-open", None).is_ok(),
                 _ => false,
             }
         } else if !ctrl && !alt && !options.vim.get() {

@@ -8,6 +8,7 @@ mod keys;
 mod logparse;
 mod pdf;
 mod project;
+mod quickopen;
 mod synctex;
 mod theme;
 mod window;
