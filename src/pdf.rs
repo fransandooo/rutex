@@ -44,13 +44,32 @@ enum Req {
 }
 
 enum Resp {
-    Loaded { generation: u64, sizes: Vec<(f64, f64)> },
+    Loaded { generation: u64, sizes: Vec<(f64, f64)>, links: Vec<Vec<Link>> },
     Failed { generation: u64, error: String },
     Rendered { generation: u64, page: usize, width: i32, height: i32, stride: i32, data: Vec<u8>, colors: Colors },
 }
 
-type InverseCallback = RefCell<Option<Box<dyn Fn(PdfPos)>>>;
+/// Búsqueda inversa: posición del clic y, si se pulsó un enlace interno, su
+/// destino (para cuando el clic cae en texto generado, como el índice).
+type InverseCallback = RefCell<Option<Box<dyn Fn(PdfPos, Option<PdfPos>)>>>;
 type Callback<T> = RefCell<Option<Box<dyn Fn(T)>>>;
+
+/// Enlace del PDF (índice, \\ref, \\cite, URL…), en puntos desde arriba a la izquierda.
+#[derive(Clone, Debug)]
+pub struct Link {
+    x1: f64,
+    y1: f64,
+    x2: f64,
+    y2: f64,
+    target: LinkTarget,
+}
+
+#[derive(Clone, Debug)]
+enum LinkTarget {
+    /// Página (desde 0) y, si se conoce, la altura desde arriba en puntos.
+    Page(usize, Option<f64>),
+    Uri(String),
+}
 
 /// Colores del modo oscuro (fondo, texto) en RGB, o `None` para el PDF original.
 type Colors = Option<[u8; 6]>;
@@ -81,6 +100,9 @@ struct State {
     bound: HashMap<usize, glib::WeakRef<gtk::DrawingArea>>,
     requested: HashSet<(usize, i32, u64)>,
     marker: Option<(usize, f64)>,
+    links: Vec<Vec<Link>>,
+    /// Posiciones de scroll a las que volver tras seguir un enlace.
+    back: Vec<f64>,
     colors: Colors,
     marker_timeout: Option<glib::SourceId>,
 }
@@ -120,6 +142,7 @@ pub struct PdfView {
     page_label: gtk::Label,
     dark_btn: gtk::ToggleButton,
     full_btn: gtk::Button,
+    back_btn: gtk::Button,
     on_dark: Callback<bool>,
     on_fullscreen: Callback<()>,
     state: RefCell<State>,
@@ -185,6 +208,12 @@ impl PdfView {
             .build();
         let full_btn = gtk::Button::builder().icon_name("view-fullscreen-symbolic").tooltip_text(tr("Fullscreen PDF (F11)")).build();
         controls.append(&dark_btn);
+        let back_btn = gtk::Button::builder()
+            .icon_name("go-previous-symbolic")
+            .tooltip_text(tr("Back to where you were"))
+            .visible(false)
+            .build();
+        controls.prepend(&back_btn);
         controls.append(&full_btn);
 
         let widget = gtk::Overlay::builder().child(&stack).build();
@@ -201,6 +230,7 @@ impl PdfView {
             page_label,
             dark_btn,
             full_btn,
+            back_btn,
             on_dark: RefCell::default(),
             on_fullscreen: RefCell::default(),
             state: RefCell::new(State { zoom: 1.0, colors: current_colors(), ..Default::default() }),
@@ -238,6 +268,22 @@ impl PdfView {
                 }
             });
         });
+
+        let weak = Rc::downgrade(&this);
+        this.back_btn.connect_clicked(move |_| {
+            if let Some(this) = weak.upgrade() {
+                this.go_back();
+            }
+        });
+        // Botón «atrás» del ratón.
+        let mouse_back = gtk::GestureClick::builder().button(8).build();
+        let weak = Rc::downgrade(&this);
+        mouse_back.connect_pressed(move |_, _, _, _| {
+            if let Some(this) = weak.upgrade() {
+                this.go_back();
+            }
+        });
+        this.scrolled.add_controller(mouse_back);
 
         let weak = Rc::downgrade(&this);
         this.dark_btn.connect_toggled(move |b| {
@@ -290,7 +336,7 @@ impl PdfView {
     }
 
     /// Llamado al hacer doble clic en el PDF (búsqueda inversa).
-    pub fn connect_inverse(&self, f: impl Fn(PdfPos) + 'static) {
+    pub fn connect_inverse(&self, f: impl Fn(PdfPos, Option<PdfPos>) + 'static) {
         *self.on_inverse.borrow_mut() = Some(Box::new(f));
     }
 
@@ -389,6 +435,11 @@ impl PdfView {
 
     /// Lleva la vista a una posición (búsqueda directa) y la marca un momento.
     pub fn reveal(self: &Rc<Self>, pos: PdfPos) {
+        self.reveal_at(pos, 0.35);
+    }
+
+    /// Como `reveal`, dejando la posición a `frac` de la altura de la vista.
+    fn reveal_at(self: &Rc<Self>, pos: PdfPos, frac: f64) {
         if pos.page >= self.model.n_items() as usize {
             return;
         }
@@ -412,7 +463,7 @@ impl PdfView {
                 let y = (pos.y * scale) as f32;
                 if let Some(p) = da.compute_point(&this.scrolled, &graphene::Point::new(0.0, y)) {
                     let vadj = this.scrolled.vadjustment();
-                    vadj.set_value(vadj.value() + p.y() as f64 - vadj.page_size() * 0.35);
+                    vadj.set_value(vadj.value() + p.y() as f64 - vadj.page_size() * frac);
                 }
                 da.queue_draw();
             }
@@ -431,6 +482,40 @@ impl PdfView {
         self.state.borrow_mut().marker_timeout = Some(id);
     }
 
+    fn link_at(&self, page: usize, x: f64, y: f64) -> Option<LinkTarget> {
+        let st = self.state.borrow();
+        st.links.get(page)?.iter().find(|l| x >= l.x1 && x <= l.x2 && y >= l.y1 && y <= l.y2).map(|l| l.target.clone())
+    }
+
+    fn follow(self: &Rc<Self>, target: LinkTarget, widget: &gtk::Widget) {
+        match target {
+            LinkTarget::Page(page, y) => {
+                let value = self.scrolled.vadjustment().value();
+                {
+                    let mut st = self.state.borrow_mut();
+                    st.back.push(value);
+                    if st.back.len() > 50 {
+                        st.back.remove(0);
+                    }
+                }
+                self.back_btn.set_visible(true);
+                self.reveal_at(PdfPos { page, x: 0.0, y: y.unwrap_or(0.0) }, 0.08);
+            }
+            LinkTarget::Uri(uri) => {
+                let window = widget.root().and_downcast::<gtk::Window>();
+                gtk::UriLauncher::new(&uri).launch(window.as_ref(), gtk::gio::Cancellable::NONE, |_| {});
+            }
+        }
+    }
+
+    fn go_back(&self) {
+        let value = self.state.borrow_mut().back.pop();
+        if let Some(v) = value {
+            self.scrolled.vadjustment().set_value(v);
+        }
+        self.back_btn.set_visible(!self.state.borrow().back.is_empty());
+    }
+
     fn setup_factory(self: &Rc<Self>, factory: &gtk::SignalListItemFactory) {
         let weak = Rc::downgrade(self);
         factory.connect_setup(move |_, obj| {
@@ -446,20 +531,56 @@ impl PdfView {
                 }
             });
 
+            // Clic en un enlace: seguirlo. Doble clic en texto o Ctrl+clic en
+            // cualquier sitio: ir al código (SyncTeX).
             let click = gtk::GestureClick::new();
             let w = weak.clone();
             click.connect_pressed(move |gesture, n_press, x, y| {
-                if n_press != 2 {
-                    return;
-                }
                 let Some(this) = w.upgrade() else { return };
-                let Some(page) = gesture.widget().and_then(|da| page_of(&da)) else { return };
+                let Some(da) = gesture.widget() else { return };
+                let Some(page) = page_of(&da) else { return };
                 let scale = this.state.borrow().scale();
-                if let Some(cb) = this.on_inverse.borrow().as_ref() {
-                    cb(PdfPos { page, x: x / scale, y: y / scale });
+                let (px, py) = (x / scale, y / scale);
+                let ctrl = gesture.current_event_state().contains(gtk::gdk::ModifierType::CONTROL_MASK);
+                let link = this.link_at(page, px, py);
+                if !ctrl && n_press == 1 && let Some(target) = link {
+                    this.follow(target, &da);
+                } else if ctrl || (n_press == 2 && link.is_none()) {
+                    // Un poco por debajo del destino, para caer en la línea del título.
+                    let fallback = match link {
+                        Some(LinkTarget::Page(p, y)) => Some(PdfPos { page: p, x: 150.0, y: y.unwrap_or(0.0) + 12.0 }),
+                        _ => None,
+                    };
+                    if let Some(cb) = this.on_inverse.borrow().as_ref() {
+                        cb(PdfPos { page, x: px, y: py }, fallback);
+                    }
                 }
             });
             da.add_controller(click);
+
+            // Mano sobre los enlaces y la URL como tooltip.
+            let motion = gtk::EventControllerMotion::new();
+            let w = weak.clone();
+            motion.connect_motion(move |ctrl, x, y| {
+                let Some(this) = w.upgrade() else { return };
+                let Some(da) = ctrl.widget() else { return };
+                let Some(page) = page_of(&da) else { return };
+                let scale = this.state.borrow().scale();
+                match this.link_at(page, x / scale, y / scale) {
+                    Some(target) => {
+                        da.set_cursor_from_name(Some("pointer"));
+                        da.set_tooltip_text(match &target {
+                            LinkTarget::Uri(u) => Some(u.as_str()),
+                            LinkTarget::Page(..) => None,
+                        });
+                    }
+                    None => {
+                        da.set_cursor_from_name(None);
+                        da.set_tooltip_text(None);
+                    }
+                }
+            });
+            da.add_controller(motion);
             item.set_child(Some(&da));
         });
 
@@ -545,7 +666,7 @@ impl PdfView {
 
     fn handle(&self, resp: Resp) {
         match resp {
-            Resp::Loaded { generation, sizes } => {
+            Resp::Loaded { generation, sizes, links } => {
                 let n_old = self.model.n_items();
                 {
                     let mut st = self.state.borrow_mut();
@@ -553,6 +674,7 @@ impl PdfView {
                         return;
                     }
                     st.shown = generation;
+                    st.links = links;
                     st.max_w = sizes.iter().map(|s| s.0).fold(0.0, f64::max);
                     st.requested.clear();
                     let n = sizes.len();
@@ -640,9 +762,10 @@ fn worker(rx: async_channel::Receiver<Req>, tx: async_channel::Sender<Resp>) {
             pending.retain(|r| matches!(r, Req::Render { generation: g, .. } if *g >= generation));
             match open(&path) {
                 Ok(d) => {
-                    let sizes = (0..d.n_pages()).filter_map(|i| d.page(i)).map(|p| p.size()).collect();
+                    let sizes: Vec<(f64, f64)> = (0..d.n_pages()).filter_map(|i| d.page(i)).map(|p| p.size()).collect();
+                    let links = (0..d.n_pages()).map(|i| page_links(&d, i, &sizes)).collect();
                     doc = Some((generation, d));
-                    if tx.send_blocking(Resp::Loaded { generation, sizes }).is_err() {
+                    if tx.send_blocking(Resp::Loaded { generation, sizes, links }).is_err() {
                         return;
                     }
                 }
@@ -726,6 +849,38 @@ fn current_colors() -> Colors {
 mod tests {
     use super::*;
 
+    /// Compila un PDF con hyperref y comprueba que se leen sus enlaces.
+    /// Necesita TeX Live: `cargo test -- --ignored`.
+    #[test]
+    #[ignore]
+    fn reads_pdf_links() {
+        let dir = std::env::temp_dir().join(format!("rutex-links-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("main.tex"),
+            "\\documentclass{article}\\usepackage{hyperref}\\begin{document}\\tableofcontents\\newpage\\section{Uno}\\label{s}See \\url{https://example.org}.\\newpage\\section{Dos}Back to \\ref{s}.\\end{document}",
+        )
+        .unwrap();
+        let ok = std::process::Command::new("latexmk").args(["-pdf", "-interaction=nonstopmode", "main.tex"]).current_dir(&dir).output().unwrap();
+        assert!(ok.status.success());
+        let doc = open(&dir.join("main.pdf")).unwrap();
+        let sizes: Vec<(f64, f64)> = (0..doc.n_pages()).filter_map(|i| doc.page(i)).map(|p| p.size()).collect();
+        let toc = page_links(&doc, 0, &sizes);
+        // El índice enlaza a la sección 1 (página 2) y a la 2 (página 3), cerca de arriba.
+        let mut pages: Vec<usize> = toc.iter().filter_map(|l| match l.target { LinkTarget::Page(p, _) => Some(p), _ => None }).collect();
+        pages.sort();
+        assert_eq!(pages, vec![1, 2]);
+        assert!(toc.iter().all(|l| l.y1 < l.y2 && l.y2 < sizes[0].1 / 2.0), "los enlaces del índice están arriba: {toc:?}");
+        if let LinkTarget::Page(_, Some(y)) = toc[0].target {
+            assert!(y < 200.0, "el destino de una sección está en la parte alta de la página: {y}");
+        }
+        let uri = page_links(&doc, 1, &sizes);
+        assert!(uri.iter().any(|l| matches!(&l.target, LinkTarget::Uri(u) if u == "https://example.org")));
+        let back = page_links(&doc, 2, &sizes);
+        assert!(back.iter().any(|l| matches!(l.target, LinkTarget::Page(1, _))));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     #[test]
     fn recolors_white_to_background() {
         // Un píxel blanco y uno negro (B, G, R, A).
@@ -734,4 +889,69 @@ mod tests {
         assert_eq!(&data[..3], &[0x20, 0x18, 0x19]);
         assert_eq!(&data[4..7], &[0xa2, 0xcc, 0xee]);
     }
+}
+
+/// Enlaces de una página. Las bindings de Rust no exponen los campos de
+/// `PopplerLinkMapping`/`PopplerDest`, así que se leen de la API en C. Poppler da
+/// las áreas con el origen abajo a la izquierda; aquí se pasan a desde arriba.
+fn page_links(doc: &poppler::Document, index: i32, sizes: &[(f64, f64)]) -> Vec<Link> {
+    use gtk::glib::translate::ToGlibPtr;
+    use poppler::ffi;
+    use std::ffi::CStr;
+
+    let Some(page) = doc.page(index) else { return Vec::new() };
+    let height = sizes.get(index as usize).map_or(0.0, |s| s.1);
+    let mut out = Vec::new();
+    for mapping in page.link_mapping() {
+        let raw: *const ffi::PopplerLinkMapping = mapping.to_glib_none().0;
+        // SAFETY: `mapping` vive durante todo el cuerpo del bucle y poppler
+        // garantiza que `action` apunta a una acción válida o es nulo.
+        let target = unsafe {
+            let action = (*raw).action;
+            if action.is_null() {
+                continue;
+            }
+            match (*action).type_ {
+                ffi::POPPLER_ACTION_GOTO_DEST => resolve_dest(doc, (*action).goto_dest.dest, sizes),
+                ffi::POPPLER_ACTION_URI if !(*action).uri.uri.is_null() => {
+                    Some(LinkTarget::Uri(CStr::from_ptr((*action).uri.uri).to_string_lossy().into_owned()))
+                }
+                _ => None,
+            }
+        };
+        let Some(target) = target else { continue };
+        let area = unsafe { (*raw).area };
+        out.push(Link { x1: area.x1, x2: area.x2, y1: height - area.y2, y2: height - area.y1, target });
+    }
+    out
+}
+
+/// Destino de un enlace interno: página (desde 0) y altura desde arriba.
+unsafe fn resolve_dest(doc: &poppler::Document, dest: *mut poppler::ffi::PopplerDest, sizes: &[(f64, f64)]) -> Option<LinkTarget> {
+    use gtk::glib::translate::ToGlibPtr;
+    use poppler::ffi;
+    use std::ffi::CStr;
+
+    if dest.is_null() {
+        return None;
+    }
+    // Los destinos con nombre (los de hyperref) se buscan en el documento.
+    let named;
+    let d: *const ffi::PopplerDest = unsafe {
+        if (*dest).type_ == ffi::POPPLER_DEST_NAMED {
+            if (*dest).named_dest.is_null() {
+                return None;
+            }
+            let name = CStr::from_ptr((*dest).named_dest).to_string_lossy().into_owned();
+            named = doc.find_dest(&name)?;
+            named.to_glib_none().0
+        } else {
+            dest
+        }
+    };
+    let (page_num, top) = unsafe { ((*d).page_num, (*d).top) };
+    let page = usize::try_from(page_num - 1).ok()?;
+    let height = sizes.get(page)?.1;
+    let y = (top > 0.0 && top <= height).then(|| height - top);
+    Some(LinkTarget::Page(page, y))
 }
