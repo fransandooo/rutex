@@ -180,6 +180,7 @@ Press `Ctrl+?` inside the app to see them all.
 | `Ctrl+D` / `Ctrl+Shift+K` / `Alt+↑↓` | Duplicate / delete / move lines |
 | `Ctrl+Space` | Show suggestions |
 | `Ctrl+N` / `Ctrl+Shift+N` | New file / new project |
+| `Ctrl+Alt+N` | New window (launching rutex again does the same) |
 | `Ctrl+Shift+E` / `Ctrl+Shift+O` / `F9` | Files / outline / toggle sidebar |
 | `Ctrl+E` | Problems panel |
 | `Ctrl++` / `Ctrl+-` / `Ctrl+0` / `Ctrl+wheel` | PDF zoom |

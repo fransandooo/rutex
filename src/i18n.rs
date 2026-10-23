@@ -472,6 +472,7 @@ const TABLE: &[(&str, &str)] = &[
     ("Algorithm", "Algoritmo"),
     ("Formula", "Fórmula"),
     ("Insert an image, a table, a symbol or a reference", "Insertar una imagen, una tabla, un símbolo o una referencia"),
+    ("New window", "Nueva ventana"),
 ];
 
 #[cfg(test)]

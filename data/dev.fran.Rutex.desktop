@@ -1,13 +1,21 @@
 [Desktop Entry]
 Type=Application
 Name=rutex
-GenericName=Editor LaTeX
-Comment=Escribe LaTeX con compilación automática y visor PDF
+GenericName=LaTeX Editor
+GenericName[es]=Editor LaTeX
+Comment=Write LaTeX with live compilation and a built-in PDF viewer
+Comment[es]=Escribe LaTeX con compilación automática y visor PDF
 Exec=rutex %F
 Icon=dev.fran.Rutex
 Terminal=false
 Categories=Office;Publishing;TextEditor;
 MimeType=text/x-tex;
-Keywords=latex;tex;tfm;tesis;overleaf;pdf;
+Keywords=latex;tex;thesis;tfm;tesis;overleaf;pdf;
 StartupNotify=true
 StartupWMClass=dev.fran.Rutex
+Actions=new-window;
+
+[Desktop Action new-window]
+Name=New Window
+Name[es]=Nueva ventana
+Exec=rutex

@@ -61,6 +61,7 @@ pub fn set_accels(app: &adw::Application) {
         ("app.quit", &["<Ctrl>q"]),
         ("app.preferences", &["<Ctrl>comma"]),
         ("app.new-project", &["<Ctrl><Shift>n"]),
+        ("app.new-window", &["<Ctrl><Alt>n"]),
         ("app.shortcuts", &["<Ctrl>question", "<Ctrl><Shift>question"]),
     ];
     for (action, keys) in accels {
@@ -69,6 +70,15 @@ pub fn set_accels(app: &adw::Application) {
 }
 
 pub fn setup_app_actions(app: &adw::Application) {
+    let new_window = gio::SimpleAction::new("new-window", None);
+    let weak = app.downgrade();
+    new_window.connect_activate(move |_, _| {
+        if let Some(app) = weak.upgrade() {
+            show_welcome(&app);
+        }
+    });
+    app.add_action(&new_window);
+
     let quit = gio::SimpleAction::new("quit", None);
     let weak = app.downgrade();
     quit.connect_activate(move |_, _| {
@@ -244,11 +254,11 @@ pub fn save_all_projects() {
     });
 }
 
+/// Launching rutex again (from the app launcher, say) opens another window
+/// in the same process, where another project can be opened: cheaper than a
+/// second process, which would load GTK, the theme and the dictionaries again.
 pub fn activate(app: &adw::Application) {
-    match app.active_window() {
-        Some(w) => w.present(),
-        None => show_welcome(app),
-    }
+    show_welcome(app);
 }
 
 /// Abre un proyecto (carpeta o archivo .tex). Si ya está abierto, lo enfoca.
@@ -540,6 +550,7 @@ impl ProjectWindow {
         };
         section(tr("Project"), &[
             (tr("New file…"), "win.new-file"),
+            (tr("New window"), "app.new-window"),
             (tr("New project…"), "app.new-project"),
             (tr("Open project…"), "win.open"),
             (tr("Open the demo"), "app.open-demo"),

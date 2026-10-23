@@ -186,6 +186,7 @@ pub fn shortcuts(parent: &impl IsA<gtk::Widget>) {
                 (tr("Save a version"), "<Control><Shift>s"),
                 (tr("New file"), "<Control>n"),
                 (tr("Open project"), "<Control>o"),
+                (tr("New window"), "<Control><Alt>n"),
                 (tr("Show files"), "<Control><Shift>e"),
                 (tr("Show outline"), "<Control><Shift>o"),
                 (tr("Toggle sidebar"), "F9"),
