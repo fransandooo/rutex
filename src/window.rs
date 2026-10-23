@@ -441,6 +441,8 @@ pub struct ProjectWindow {
     issues_btn: gtk::ToggleButton,
     engine_label: gtk::Label,
     words_label: gtk::Label,
+    words_popover: gtk::Popover,
+    word_count: RefCell<Option<compiler::WordCount>>,
     spell_label: gtk::Label,
     title_label: gtk::Label,
     issues_revealer: gtk::Revealer,
@@ -630,13 +632,15 @@ impl ProjectWindow {
         // --- Barra de estado ---
         let engine_label = gtk::Label::new(None);
         let words_label = gtk::Label::new(None);
+        let words_popover = gtk::Popover::builder().css_classes(["words-popover"]).build();
+        let words_btn = gtk::MenuButton::builder().child(&words_label).popover(&words_popover).css_classes(["flat", "words-button"]).tooltip_text(tr("Words per chapter and goal")).build();
         let spell_label = gtk::Label::builder().css_classes(["spell-lang"]).build();
         let statusbar = gtk::Box::builder().spacing(16).css_classes(["statusbar"]).build();
         statusbar.append(&editor.position_label);
         statusbar.append(&editor.vim_label);
         statusbar.append(&gtk::Box::builder().hexpand(true).build());
         statusbar.append(&spell_label);
-        statusbar.append(&words_label);
+        statusbar.append(&words_btn);
         statusbar.append(&engine_label);
 
         let editor_col = gtk::Box::builder().orientation(gtk::Orientation::Vertical).css_classes(["editor-column"]).build();
@@ -712,6 +716,8 @@ impl ProjectWindow {
             issues_btn,
             engine_label,
             words_label,
+            words_popover,
+            word_count: RefCell::default(),
             spell_label,
             title_label,
             issues_revealer,
@@ -1470,10 +1476,68 @@ impl ProjectWindow {
         let weak = Rc::downgrade(self);
         glib::spawn_future_local(async move {
             let words = compiler::word_count(p.root, p.main).await;
-            if let (Some(this), Some(n)) = (weak.upgrade(), words) {
-                this.words_label.set_label(&trf("{} words", &[&thousands(n)]));
+            if let (Some(this), Some(wc)) = (weak.upgrade(), words) {
+                *this.word_count.borrow_mut() = Some(wc);
+                this.show_word_count();
             }
         });
+    }
+
+    fn word_goal(&self) -> u64 {
+        config::get().goal_for(&self.project.borrow().root)
+    }
+
+    /// Status bar label ("877 / 15,000 words") and the per-chapter popover.
+    fn show_word_count(self: &Rc<Self>) {
+        let Some(wc) = self.word_count.borrow().clone() else { return };
+        let goal = self.word_goal();
+        self.words_label.set_label(&if goal > 0 {
+            trf("{} / {} words", &[&thousands(wc.total), &thousands(goal)])
+        } else {
+            trf("{} words", &[&thousands(wc.total)])
+        });
+
+        let body = gtk::Box::builder().orientation(gtk::Orientation::Vertical).spacing(8).margin_start(6).margin_end(6).margin_top(6).margin_bottom(6).width_request(320).build();
+        body.append(&gtk::Label::builder().label(tr("Words")).xalign(0.0).css_classes(["heading"]).build());
+        if goal > 0 {
+            let fraction = (wc.total as f64 / goal as f64).min(1.0);
+            body.append(&gtk::ProgressBar::builder().fraction(fraction).build());
+            body.append(&gtk::Label::builder().label(trf("{} of {} ({}%)", &[&thousands(wc.total), &thousands(goal), &((fraction * 100.0).round() as u32)])).xalign(0.0).css_classes(["dim-label", "caption"]).build());
+        }
+        let max = wc.files.iter().map(|f| f.1).max().unwrap_or(1).max(1);
+        let grid = gtk::Grid::builder().column_spacing(10).row_spacing(4).margin_top(4).build();
+        for (i, (file, n)) in wc.files.iter().enumerate() {
+            let name = Path::new(file).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+            grid.attach(&gtk::Label::builder().label(&name).xalign(0.0).tooltip_text(file).ellipsize(gtk::pango::EllipsizeMode::End).max_width_chars(22).build(), 0, i as i32, 1, 1);
+            grid.attach(&gtk::LevelBar::builder().value(*n as f64 / max as f64).hexpand(true).valign(gtk::Align::Center).css_classes(["words-bar"]).build(), 1, i as i32, 1, 1);
+            grid.attach(&gtk::Label::builder().label(thousands(*n)).xalign(1.0).css_classes(["numeric"]).build(), 2, i as i32, 1, 1);
+        }
+        body.append(&grid);
+
+        let goal_spin = gtk::SpinButton::with_range(0.0, 500_000.0, 500.0);
+        goal_spin.set_value(goal as f64);
+        goal_spin.set_tooltip_text(Some(tr("0 = no goal")));
+        let goal_row = gtk::Box::builder().spacing(8).margin_top(6).build();
+        goal_row.append(&gtk::Label::builder().label(tr("Goal")).xalign(0.0).hexpand(true).build());
+        goal_row.append(&goal_spin);
+        body.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+        body.append(&goal_row);
+        let weak = Rc::downgrade(self);
+        goal_spin.connect_value_changed(move |s| {
+            let Some(this) = weak.upgrade() else { return };
+            let root = this.project.borrow().root.clone();
+            config::update(|c| c.set_goal(root, s.value() as u64));
+            let wc = this.word_count.borrow().clone();
+            if let Some(wc) = wc {
+                let goal = this.word_goal();
+                this.words_label.set_label(&if goal > 0 {
+                    trf("{} / {} words", &[&thousands(wc.total), &thousands(goal)])
+                } else {
+                    trf("{} words", &[&thousands(wc.total)])
+                });
+            }
+        });
+        self.words_popover.set_child(Some(&body));
     }
 
     /// Abre el panel de problemas con el de esa línea seleccionado.

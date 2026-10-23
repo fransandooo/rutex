@@ -59,6 +59,8 @@ pub struct Config {
     pub recent: Vec<PathBuf>,
     /// Archivo principal elegido a mano: (raíz, relativo).
     pub mains: Vec<(PathBuf, PathBuf)>,
+    /// Word goal per project: (root, words).
+    pub goals: Vec<(PathBuf, u64)>,
 }
 
 impl Default for Config {
@@ -77,6 +79,7 @@ impl Default for Config {
             spell_lang: "auto".to_string(),
             recent: Vec::new(),
             mains: Vec::new(),
+            goals: Vec::new(),
         }
     }
 }
@@ -105,6 +108,13 @@ impl Config {
                 "spellcheck" => cfg.spellcheck = flag,
                 "spell_lang" => cfg.spell_lang = v.trim().to_string(),
                 "recent" => cfg.recent.push(v.into()),
+                "goal" => {
+                    if let Some((root, n)) = v.split_once('\t')
+                        && let Ok(n) = n.trim().parse()
+                    {
+                        cfg.goals.push((root.into(), n));
+                    }
+                }
                 "main" => {
                     if let Some((root, rel)) = v.split_once('\t') {
                         cfg.mains.push((root.into(), rel.into()));
@@ -136,6 +146,9 @@ impl Config {
         for (root, rel) in &self.mains {
             out.push_str(&format!("main={}\t{}\n", root.display(), rel.display()));
         }
+        for (root, n) in &self.goals {
+            out.push_str(&format!("goal={}\t{n}\n", root.display()));
+        }
         let p = path();
         let _ = fs::create_dir_all(p.parent().unwrap());
         let _ = fs::write(p, out);
@@ -149,6 +162,17 @@ impl Config {
 
     pub fn main_for(&self, root: &PathBuf) -> Option<PathBuf> {
         self.mains.iter().find(|(r, _)| r == root).map(|(_, m)| m.clone())
+    }
+
+    pub fn goal_for(&self, root: &PathBuf) -> u64 {
+        self.goals.iter().find(|(r, _)| r == root).map_or(0, |(_, n)| *n)
+    }
+
+    pub fn set_goal(&mut self, root: PathBuf, words: u64) {
+        self.goals.retain(|(r, _)| *r != root);
+        if words > 0 {
+            self.goals.push((root, words));
+        }
     }
 
     pub fn set_main(&mut self, root: PathBuf, rel: PathBuf) {

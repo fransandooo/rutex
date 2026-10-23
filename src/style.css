@@ -350,3 +350,14 @@ popover.context-menu separator {
 .welcome-action image.accent {
   color: var(--accent-color);
 }
+
+/* ---------- Palabras ---------- */
+.words-button {
+  padding: 0 6px;
+  min-height: 18px;
+  font-size: inherit;
+  font-weight: normal;
+}
+.words-button label {
+  opacity: 0.7;
+}

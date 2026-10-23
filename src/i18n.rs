@@ -405,6 +405,12 @@ const TABLE: &[(&str, &str)] = &[
     ("{} is not in TeX Live: check the name", "{} no existe en TeX Live: revisa el nombre"),
     ("Copy install command", "Copiar el comando de instalación"),
     ("Copied: {} — paste it in a terminal, then compile again", "Copiado: {} — pégalo en una terminal y vuelve a compilar"),
+    ("Words per chapter and goal", "Palabras por capítulo y objetivo"),
+    ("{} / {} words", "{} / {} palabras"),
+    ("Words", "Palabras"),
+    ("{} of {} ({}%)", "{} de {} ({} %)"),
+    ("0 = no goal", "0 = sin objetivo"),
+    ("Goal", "Objetivo"),
 ];
 
 #[cfg(test)]

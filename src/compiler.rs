@@ -184,16 +184,39 @@ impl Running {
 }
 
 /// Palabras del documento entero (siguiendo \\input/\\include) con texcount.
-pub async fn word_count(root: PathBuf, main: PathBuf) -> Option<u64> {
+pub async fn word_count(root: PathBuf, main: PathBuf) -> Option<WordCount> {
     gio::spawn_blocking(move || {
-        let out = command("texcount").current_dir(&root).args(["-inc", "-sum", "-1", "-utf8"]).arg(&main).output().ok()?;
-        let text = String::from_utf8_lossy(&out.stdout);
-        let first = text.lines().find(|l| l.trim().starts_with(|c: char| c.is_ascii_digit()))?;
-        first.trim().chars().take_while(char::is_ascii_digit).collect::<String>().parse().ok()
+        let out = command("texcount").current_dir(&root).args(["-inc", "-sum", "-brief", "-utf8"]).arg(&main).output().ok()?;
+        parse_word_count(&String::from_utf8_lossy(&out.stdout))
     })
     .await
     .ok()
     .flatten()
+}
+
+/// Words of the whole document and of each file, in document order.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct WordCount {
+    pub total: u64,
+    pub files: Vec<(String, u64)>,
+}
+
+/// Parses `texcount -inc -sum -brief`: "274: Included file: ./chapters/intro.tex".
+pub fn parse_word_count(text: &str) -> Option<WordCount> {
+    let mut wc = WordCount::default();
+    let mut total = None;
+    for line in text.lines() {
+        let Some((n, rest)) = line.split_once(':') else { continue };
+        let Ok(n) = n.trim().parse::<u64>() else { continue };
+        let rest = rest.trim();
+        if rest.starts_with("File(s) total") {
+            total = Some(n);
+        } else if let Some(f) = rest.strip_prefix("Included file:").or_else(|| rest.strip_prefix("File:")) {
+            wc.files.push((f.trim().trim_start_matches("./").to_string(), n));
+        }
+    }
+    wc.total = total.or_else(|| Some(wc.files.iter().map(|f| f.1).sum()))?;
+    Some(wc)
 }
 
 fn tail(text: &str, max_lines: usize) -> String {
@@ -204,6 +227,14 @@ fn tail(text: &str, max_lines: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_texcount() {
+        let out = "60: File: main.tex\n274: Included file: ./chapters/introduction.tex\nSum of files: main.tex\n877: File(s) total: main.tex\n";
+        let wc = parse_word_count(out).unwrap();
+        assert_eq!(wc.total, 877);
+        assert_eq!(wc.files, vec![("main.tex".to_string(), 60), ("chapters/introduction.tex".to_string(), 274)]);
+    }
 
     #[test]
     fn engine_detection() {
