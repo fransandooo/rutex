@@ -112,6 +112,19 @@ impl History {
         parse_log(&log)
     }
 
+    /// The version the margin change bars compare against: the newest named
+    /// version, or else the newest one.
+    pub fn baseline(&self) -> Option<String> {
+        let versions = self.versions(300);
+        versions.iter().find(|v| v.name.is_some()).or_else(|| versions.first()).map(|v| v.id.clone())
+    }
+
+    /// Content of a file in a version (None if it did not exist then).
+    pub fn file_at(&self, id: &str, rel: &Path) -> Option<String> {
+        let spec = format!("{id}:{}", rel.to_string_lossy());
+        self.ok(&["show", &spec]).ok()
+    }
+
     /// Unified diff of the project between a version and the current files.
     pub fn diff_with_current(&self, id: &str) -> String {
         // Include files created since then.

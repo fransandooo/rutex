@@ -115,6 +115,28 @@ pub fn setup_app_actions(app: &adw::Application) {
     });
     app.add_action(&preferences);
 
+    let spellcheck = gio::SimpleAction::new_stateful("spellcheck", None, &config::get().spellcheck.to_variant());
+    let weak = app.downgrade();
+    spellcheck.connect_activate(move |action, _| {
+        let on = !action.state().and_then(|s| s.get::<bool>()).unwrap_or(true);
+        config::update(|c| c.spellcheck = on);
+        if let Some(app) = weak.upgrade() {
+            apply_change(&app, Change::Spelling);
+        }
+    });
+    app.add_action(&spellcheck);
+
+    let spell_lang = gio::SimpleAction::new_stateful("spell-lang", Some(glib::VariantTy::STRING), &config::get().spell_lang.to_variant());
+    let weak = app.downgrade();
+    spell_lang.connect_activate(move |_, param| {
+        let Some(code) = param.and_then(|p| p.get::<String>()) else { return };
+        config::update(|c| c.spell_lang = code);
+        if let Some(app) = weak.upgrade() {
+            apply_change(&app, Change::Spelling);
+        }
+    });
+    app.add_action(&spell_lang);
+
     let new_project = gio::SimpleAction::new("new-project", None);
     let weak = app.downgrade();
     new_project.connect_activate(move |_, _| {
@@ -176,6 +198,12 @@ fn apply_change(app: &adw::Application, change: Change) {
         }),
         Change::Autocompile => {}
         Change::Spelling => for_each_project(|pw| {
+            let cfg = config::get();
+            for (name, value) in [("spellcheck", cfg.spellcheck.to_variant()), ("spell-lang", cfg.spell_lang.to_variant())] {
+                if let Some(a) = app.lookup_action(name).and_downcast::<gio::SimpleAction>() {
+                    a.set_state(&value);
+                }
+            }
             pw.editor.set_spellcheck(config::get().spellcheck);
             pw.update_spell_language();
         }),
@@ -470,6 +498,8 @@ pub struct ProjectWindow {
     pdf_full: Cell<Option<bool>>,
     /// Local version history (None if git is not installed).
     history: Option<Arc<History>>,
+    /// History version the margin change bars compare against.
+    baseline: RefCell<Option<String>>,
 }
 
 impl ProjectWindow {
@@ -497,26 +527,40 @@ impl ProjectWindow {
         let sidebar_btn = gtk::ToggleButton::builder().icon_name("sidebar-show-symbolic").active(true).tooltip_text(tr("Sidebar (F9)")).build();
         header.pack_start(&sidebar_btn);
 
+        // Every feature is reachable from here; GTK shows each shortcut next to it.
         let menu = gio::Menu::new();
-        let s1 = gio::Menu::new();
-        s1.append(Some(tr("New project…")), Some("app.new-project"));
-        s1.append(Some(tr("Open project…")), Some("win.open"));
-        s1.append(Some(tr("Open the demo")), Some("app.open-demo"));
-        s1.append(Some(tr("New file…")), Some("win.new-file"));
-        s1.append(Some(tr("Use this file as main")), Some("win.set-main"));
-        menu.append_section(None, &s1);
-        let s2 = gio::Menu::new();
-        s2.append(Some(tr("Check before submitting…")), Some("win.check"));
-        s2.append(Some(tr("Version history…")), Some("win.history"));
-        s2.append(Some(tr("Save a version…")), Some("win.save-version"));
-        s2.append(Some(tr("Save PDF to the project folder")), Some("win.export-pdf"));
-        s2.append(Some(tr("Open PDF in external viewer")), Some("win.open-pdf"));
-        s2.append(Some(tr("Clean auxiliary files")), Some("win.clean"));
-        menu.append_section(None, &s2);
-        let s3 = gio::Menu::new();
-        s3.append_submenu(Some(tr("Theme")), &theme_menu());
-        s3.append(Some(tr("Vim mode")), Some("app.vim"));
-        menu.append_section(None, &s3);
+        let section = |title: &str, items: &[(&str, &str)]| {
+            let s = gio::Menu::new();
+            for (label, action) in items {
+                s.append(Some(label), Some(action));
+            }
+            menu.append_section(Some(title), &s);
+        };
+        section(tr("Project"), &[
+            (tr("New file…"), "win.new-file"),
+            (tr("New project…"), "app.new-project"),
+            (tr("Open project…"), "win.open"),
+            (tr("Open the demo"), "app.open-demo"),
+            (tr("Use this file as main"), "win.set-main"),
+        ]);
+        section(tr("Tools"), &[
+            (tr("Find in project"), "win.find-in-project"),
+            (tr("Quick open"), "win.quick-open"),
+            (tr("Check before submitting…"), "win.check"),
+            (tr("Version history…"), "win.history"),
+            (tr("Save a version…"), "win.save-version"),
+        ]);
+        section(tr("PDF"), &[
+            (tr("Fullscreen PDF"), "win.pdf-fullscreen"),
+            (tr("Save PDF to the project folder"), "win.export-pdf"),
+            (tr("Open PDF in external viewer"), "win.open-pdf"),
+            (tr("Clean auxiliary files"), "win.clean"),
+        ]);
+        let view = gio::Menu::new();
+        view.append_submenu(Some(tr("Theme")), &theme_menu());
+        view.append(Some(tr("Check spelling")), Some("app.spellcheck"));
+        view.append(Some(tr("Vim mode")), Some("app.vim"));
+        menu.append_section(Some(tr("View")), &view);
         let s4 = gio::Menu::new();
         s4.append(Some(tr("Preferences")), Some("app.preferences"));
         s4.append(Some(tr("Keyboard shortcuts")), Some("app.shortcuts"));
@@ -540,7 +584,9 @@ impl ProjectWindow {
         status_box.append(&status);
         let issues_btn = gtk::ToggleButton::builder().child(&status_box).tooltip_text(tr("Problems and output (Ctrl+E)")).css_classes(["flat", "compile-status"]).build();
 
+        let history_btn = gtk::Button::builder().icon_name("document-open-recent-symbolic").tooltip_text(tr("Version history (Ctrl+Shift+H)")).action_name("win.history").build();
         header.pack_end(&menu_btn);
+        header.pack_end(&history_btn);
         header.pack_end(&compile_btn);
         header.pack_end(&issues_btn);
 
@@ -634,12 +680,25 @@ impl ProjectWindow {
         let words_label = gtk::Label::new(None);
         let words_popover = gtk::Popover::builder().css_classes(["words-popover"]).build();
         let words_btn = gtk::MenuButton::builder().child(&words_label).popover(&words_popover).css_classes(["flat", "words-button"]).tooltip_text(tr("Words per chapter and goal")).build();
-        let spell_label = gtk::Label::builder().css_classes(["spell-lang"]).build();
+        let spell_label = gtk::Label::new(None);
+        let spell_box = gtk::Box::builder().spacing(5).build();
+        spell_box.append(&gtk::Image::from_icon_name("tools-check-spelling-symbolic"));
+        spell_box.append(&spell_label);
+        let spell_menu = gio::Menu::new();
+        spell_menu.append(Some(tr("Check spelling")), Some("app.spellcheck"));
+        let langs = gio::Menu::new();
+        for (code, name) in [("auto", tr("Same as the document (babel)")), ("en_US", "English (US)"), ("en_GB", "English (UK)"), ("es_ES", "Español")] {
+            let item = gio::MenuItem::new(Some(name), None);
+            item.set_action_and_target_value(Some("app.spell-lang"), Some(&code.to_variant()));
+            langs.append_item(&item);
+        }
+        spell_menu.append_section(Some(tr("Spelling language")), &langs);
+        let spell_btn = gtk::MenuButton::builder().child(&spell_box).menu_model(&spell_menu).css_classes(["flat", "words-button"]).tooltip_text(tr("Spelling: click to change the language or turn it off")).build();
         let statusbar = gtk::Box::builder().spacing(16).css_classes(["statusbar"]).build();
         statusbar.append(&editor.position_label);
         statusbar.append(&editor.vim_label);
         statusbar.append(&gtk::Box::builder().hexpand(true).build());
-        statusbar.append(&spell_label);
+        statusbar.append(&spell_btn);
         statusbar.append(&words_btn);
         statusbar.append(&engine_label);
 
@@ -743,6 +802,7 @@ impl ProjectWindow {
             editor_col,
             pdf_full: Cell::new(None),
             history,
+            baseline: RefCell::default(),
         });
 
         this.issues_btn.bind_property("active", &this.issues_revealer, "reveal-child").sync_create().build();
@@ -760,6 +820,7 @@ impl ProjectWindow {
         }
         this.compile();
         this.refresh_index();
+        this.refresh_baseline();
         this
     }
 
@@ -809,6 +870,13 @@ impl ProjectWindow {
                 let cmd = this.install_command.borrow().clone();
                 this.window.clipboard().set_text(&cmd);
                 this.toast(&trf("Copied: {} — paste it in a terminal, then compile again", &[&cmd]));
+            }
+        });
+
+        let weak = Rc::downgrade(self);
+        self.editor.connect_loaded(move |rel| {
+            if let Some(this) = weak.upgrade() {
+                this.load_baseline_for(rel);
             }
         });
 
@@ -1035,7 +1103,6 @@ impl ProjectWindow {
         }
     }
 
-    /// Recalcula esquema, etiquetas y bibliografía en un hilo aparte.
     /// Dictionary from the preferences or the document's babel language.
     fn update_spell_language(&self) {
         let cfg = config::get();
@@ -1043,19 +1110,14 @@ impl ProjectWindow {
         let main_src = fs::read_to_string(p.root.join(&p.main)).unwrap_or_default();
         let wanted = crate::spell::resolve(&cfg.spell_lang, &main_src);
         let used = self.editor.set_spell_language(&wanted);
-        self.spell_label.set_visible(cfg.spellcheck);
-        match used {
-            Some(code) => {
-                self.spell_label.set_label(&code);
-                self.spell_label.set_tooltip_text(Some(tr("Spelling language")));
-            }
-            None => {
-                self.spell_label.set_label("—");
-                self.spell_label.set_tooltip_text(Some(&trf("No dictionary installed for {} (install hunspell-{})", &[&wanted, &wanted.split('_').next().unwrap_or("")])));
-            }
+        match (cfg.spellcheck, used) {
+            (false, _) => self.spell_label.set_label(tr("Spelling off")),
+            (true, Some(code)) => self.spell_label.set_label(&crate::spell::display_name(&code)),
+            (true, None) => self.spell_label.set_label(&trf("No dictionary for {} (install hunspell-{})", &[&wanted, &wanted.split('_').next().unwrap_or("")])),
         }
     }
 
+    /// Recalcula esquema, etiquetas y bibliografía en un hilo aparte.
     fn refresh_index(self: &Rc<Self>) {
         self.update_spell_language();
         let generation = self.index_generation.get() + 1;
@@ -1726,8 +1788,9 @@ impl ProjectWindow {
     }
 
     /// Automatic version after a good build, at most every 5 minutes.
-    fn auto_snapshot(&self) {
+    fn auto_snapshot(self: &Rc<Self>) {
         let Some(h) = self.history.clone() else { return };
+        let weak = Rc::downgrade(self);
         glib::spawn_future_local(async move {
             let _ = gio::spawn_blocking(move || {
                 if h.age_of_last().is_none_or(|age| age >= 300) {
@@ -1735,6 +1798,40 @@ impl ProjectWindow {
                 }
             })
             .await;
+            // A new project gets its first baseline from its first version.
+            if let Some(this) = weak.upgrade()
+                && this.baseline.borrow().is_none()
+            {
+                this.refresh_baseline();
+            }
+        });
+    }
+
+    /// Picks the baseline (newest named version, or newest) and reloads the bars.
+    fn refresh_baseline(self: &Rc<Self>) {
+        let Some(h) = self.history.clone() else { return };
+        let weak = Rc::downgrade(self);
+        glib::spawn_future_local(async move {
+            let id = gio::spawn_blocking(move || h.baseline()).await.ok().flatten();
+            let Some(this) = weak.upgrade() else { return };
+            *this.baseline.borrow_mut() = id;
+            for rel in this.editor.open_files() {
+                this.load_baseline_for(&rel);
+            }
+        });
+    }
+
+    fn load_baseline_for(self: &Rc<Self>, rel: &Path) {
+        let (Some(h), Some(id)) = (self.history.clone(), self.baseline.borrow().clone()) else { return };
+        let rel = rel.to_path_buf();
+        let weak = Rc::downgrade(self);
+        glib::spawn_future_local(async move {
+            let r = rel.clone();
+            // A file that did not exist in the baseline is all new.
+            let text = gio::spawn_blocking(move || h.file_at(&id, &r).unwrap_or_default()).await.ok();
+            if let Some(this) = weak.upgrade() {
+                this.editor.set_baseline(&rel, text);
+            }
         });
     }
 
@@ -1752,6 +1849,7 @@ impl ProjectWindow {
             this.refresh_files();
             this.compile();
             this.toast(tr("Version restored. Your previous state is saved in the history."));
+            this.refresh_baseline();
         });
     }
 
@@ -1769,6 +1867,7 @@ impl ProjectWindow {
                 let saved = gio::spawn_blocking(move || h.snapshot(Some(&name))).await;
                 if let (Some(this), Ok(Ok(_))) = (weak.upgrade(), saved) {
                     this.toast(tr("Version saved"));
+                    this.refresh_baseline();
                 }
             });
         });

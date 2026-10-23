@@ -361,3 +361,10 @@ popover.context-menu separator {
 .words-button label {
   opacity: 0.7;
 }
+
+/* ---------- Sugerencias ortográficas ---------- */
+.spell-bubble .suggestion {
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-weight: 600;
+}

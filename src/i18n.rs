@@ -411,6 +411,17 @@ const TABLE: &[(&str, &str)] = &[
     ("{} of {} ({}%)", "{} de {} ({} %)"),
     ("0 = no goal", "0 = sin objetivo"),
     ("Goal", "Objetivo"),
+    ("Tools", "Herramientas"),
+    ("View", "Ver"),
+    ("Fullscreen PDF", "PDF a pantalla completa"),
+    ("Version history (Ctrl+Shift+H)", "Historial de versiones (Ctrl+Shift+H)"),
+    ("Spelling: click to change the language or turn it off", "Ortografía: pulsa para cambiar el idioma o desactivarla"),
+    ("Spelling off", "Ortografía desactivada"),
+    ("No dictionary for {} (install hunspell-{})", "No hay diccionario para {} (instala hunspell-{})"),
+    ("“{}” is not in the {} dictionary", "«{}» no está en el diccionario de {}"),
+    ("No suggestions", "Sin sugerencias"),
+    ("Add to dictionary", "Añadir al diccionario"),
+    ("Ignore", "Ignorar"),
 ];
 
 #[cfg(test)]

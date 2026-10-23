@@ -84,6 +84,24 @@ pub fn resolve(setting: &str, main_src: &str) -> String {
         .to_string()
 }
 
+/// Readable name for a dictionary code ("en_US" → "English (US)").
+pub fn display_name(code: &str) -> String {
+    let names = [
+        ("en_US", "English (US)"),
+        ("en_GB", "English (UK)"),
+        ("en", "English"),
+        ("es_ES", "Español"),
+        ("es", "Español"),
+        ("ca_ES", "Català"),
+        ("fr_FR", "Français"),
+        ("de_DE", "Deutsch"),
+        ("it_IT", "Italiano"),
+        ("pt_PT", "Português"),
+        ("pt_BR", "Português (BR)"),
+    ];
+    names.iter().find(|(c, _)| *c == code).map_or_else(|| code.to_string(), |(_, n)| n.to_string())
+}
+
 /// Uses the closest dictionary that is installed (es_ES → es, en_GB → en_US…).
 pub fn installed(checker: &libspelling::Checker, wanted: &str) -> Option<String> {
     let provider = checker.provider();

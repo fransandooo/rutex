@@ -28,6 +28,10 @@ struct Doc {
     mtime: Option<SystemTime>,
     vim: Option<(gtk::EventControllerKey, sourceview5::VimIMContext)>,
     spell: Option<libspelling::TextBufferAdapter>,
+    bar: crate::changebar::ChangeBar,
+    /// Text in the history version the margin bars compare against.
+    baseline: Option<String>,
+    diff_timer: Option<glib::SourceId>,
 }
 
 type Callback = RefCell<Option<Box<dyn Fn()>>>;
@@ -56,6 +60,7 @@ pub struct Editor {
     on_change: Callback,
     on_save: Callback,
     on_switch: Callback,
+    on_loaded: RefCell<Option<Box<dyn Fn(&Path)>>>,
     vim_binding: RefCell<Option<glib::Binding>>,
     search_bar: gtk::SearchBar,
     search_entry: gtk::SearchEntry,
@@ -111,6 +116,7 @@ impl Editor {
             on_change: RefCell::default(),
             on_save: RefCell::default(),
             on_switch: RefCell::default(),
+            on_loaded: RefCell::default(),
             vim_binding: RefCell::default(),
             search_bar,
             search_entry,
@@ -348,12 +354,26 @@ impl Editor {
             adapter.set_enabled(cfg.spellcheck);
             adapter
         });
-        let mut doc = Doc { rel: rel.to_path_buf(), buffer, view, page: page.clone(), mtime: mtime(&abs), vim: None, spell };
+        // Change bars in the margin, right after the line numbers.
+        let bar = crate::changebar::ChangeBar::default();
+        bar.refresh_colors();
+        sourceview5::prelude::ViewExt::gutter(&view, gtk::TextWindowType::Left).insert(&bar, 100);
+        let weak = Rc::downgrade(self);
+        let changed_rel = rel.to_path_buf();
+        buffer.connect_changed(move |_| {
+            if let Some(this) = weak.upgrade() {
+                this.schedule_diff(&changed_rel);
+            }
+        });
+        let mut doc = Doc { rel: rel.to_path_buf(), buffer, view, page: page.clone(), mtime: mtime(&abs), vim: None, spell, bar, baseline: None, diff_timer: None };
         self.apply_marks(&doc);
         if cfg.vim {
             self.attach_vim(&mut doc);
         }
         self.docs.borrow_mut().push(doc);
+        if let Some(cb) = self.on_loaded.borrow().as_ref() {
+            cb(rel);
+        }
         Ok(page)
     }
 
@@ -445,8 +465,74 @@ impl Editor {
     pub fn refresh_scheme(&self) {
         for doc in self.docs.borrow().iter() {
             apply_scheme(&doc.buffer);
+            doc.bar.refresh_colors();
         }
         self.color_marks();
+    }
+
+    /// Misspelled word under the mouse: suggestions to click, add or ignore.
+    fn spell_bubble(&self, buffer: &sourceview5::Buffer, iter: &gtk::TextIter) -> Option<gtk::Widget> {
+        let docs = self.docs.borrow();
+        let adapter = docs.iter().find(|d| d.buffer == *buffer)?.spell.clone()?;
+        drop(docs);
+        let tag = adapter.tag()?;
+        if !adapter.is_enabled() || !iter.has_tag(&tag) {
+            return None;
+        }
+        let mut start = *iter;
+        if !start.starts_tag(Some(&tag)) {
+            start.backward_to_tag_toggle(Some(&tag));
+        }
+        let mut end = *iter;
+        end.forward_to_tag_toggle(Some(&tag));
+        let word = buffer.text(&start, &end, false).to_string();
+        if word.trim().is_empty() {
+            return None;
+        }
+        let language = self.checker.language().map(|l| crate::spell::display_name(&l)).unwrap_or_default();
+        let corrections: Vec<String> = self.checker.list_corrections(&word).into_iter().take(6).map(|c| c.to_string()).collect();
+
+        let b = gtk::Box::builder().orientation(gtk::Orientation::Vertical).spacing(8).css_classes(["spell-bubble"]).build();
+        b.append(&gtk::Label::builder().label(crate::i18n::trf("“{}” is not in the {} dictionary", &[&word, &language])).xalign(0.0).wrap(true).css_classes(["dim-label", "caption"]).build());
+        // Marks survive edits, iters do not.
+        let m_start = buffer.create_mark(None, &start, true);
+        let m_end = buffer.create_mark(None, &end, false);
+        let fixes = gtk::FlowBox::builder().selection_mode(gtk::SelectionMode::None).max_children_per_line(6).column_spacing(4).row_spacing(4).build();
+        for c in &corrections {
+            let btn = gtk::Button::builder().label(c).css_classes(["suggestion"]).build();
+            let (buf, ms, me, text) = (buffer.clone(), m_start.clone(), m_end.clone(), c.clone());
+            btn.connect_clicked(move |_| {
+                let mut s = buf.iter_at_mark(&ms);
+                let mut e = buf.iter_at_mark(&me);
+                buf.begin_user_action();
+                buf.delete(&mut s, &mut e);
+                buf.insert(&mut s, &text);
+                buf.end_user_action();
+            });
+            fixes.insert(&btn, -1);
+        }
+        if corrections.is_empty() {
+            b.append(&gtk::Label::builder().label(tr("No suggestions")).xalign(0.0).build());
+        } else {
+            b.append(&fixes);
+        }
+        let actions = gtk::Box::builder().spacing(6).build();
+        let add = gtk::Button::builder().label(tr("Add to dictionary")).css_classes(["flat"]).build();
+        let ignore = gtk::Button::builder().label(tr("Ignore")).css_classes(["flat"]).build();
+        let (checker, ad, w) = (self.checker.clone(), adapter.clone(), word.clone());
+        add.connect_clicked(move |_| {
+            checker.add_word(&w);
+            ad.invalidate_all();
+        });
+        let (checker, ad, w) = (self.checker.clone(), adapter, word);
+        ignore.connect_clicked(move |_| {
+            checker.ignore_word(&w);
+            ad.invalidate_all();
+        });
+        actions.append(&add);
+        actions.append(&ignore);
+        b.append(&actions);
+        Some(b.upcast())
     }
 
     /// \\ref / \\cite key at an iter.
@@ -505,7 +591,7 @@ impl Editor {
             let this = weak.upgrade()?;
             let line = iter.line() as u32 + 1;
             let issues = this.issues_at(buffer, line).map(|(_, v)| v);
-            let reference = this.reference_bubble(buffer, iter);
+            let reference = this.spell_bubble(buffer, iter).or_else(|| this.reference_bubble(buffer, iter));
             match (issues, reference) {
                 (None, None) => None,
                 (Some(i), None) => Some(crate::hover::issues_bubble(&i).upcast()),
@@ -573,6 +659,57 @@ impl Editor {
         for doc in self.docs.borrow().iter() {
             doc.view.set_wrap_mode(if wrap { gtk::WrapMode::WordChar } else { gtk::WrapMode::None });
         }
+    }
+
+    /// Called after a file is opened (the window then fetches its baseline).
+    pub fn connect_loaded(&self, f: impl Fn(&Path) + 'static) {
+        *self.on_loaded.borrow_mut() = Some(Box::new(f));
+    }
+
+    pub fn open_files(&self) -> Vec<PathBuf> {
+        self.docs.borrow().iter().map(|d| d.rel.clone()).collect()
+    }
+
+    /// Sets the text the margin bars compare against (None hides the bars).
+    pub fn set_baseline(&self, rel: &Path, text: Option<String>) {
+        if let Some(doc) = self.docs.borrow_mut().iter_mut().find(|d| d.rel == rel) {
+            doc.baseline = text;
+        }
+        self.update_diff(rel);
+    }
+
+    fn schedule_diff(self: &Rc<Self>, rel: &Path) {
+        let mut docs = self.docs.borrow_mut();
+        let Some(doc) = docs.iter_mut().find(|d| d.rel == rel) else { return };
+        if doc.baseline.is_none() {
+            return;
+        }
+        if let Some(id) = doc.diff_timer.take() {
+            id.remove();
+        }
+        let weak = Rc::downgrade(self);
+        let rel = rel.to_path_buf();
+        doc.diff_timer = Some(glib::timeout_add_local_once(std::time::Duration::from_millis(400), move || {
+            if let Some(this) = weak.upgrade() {
+                if let Some(d) = this.docs.borrow_mut().iter_mut().find(|d| d.rel == rel) {
+                    d.diff_timer = None;
+                }
+                this.update_diff(&rel);
+            }
+        }));
+    }
+
+    fn update_diff(&self, rel: &Path) {
+        let docs = self.docs.borrow();
+        let Some(doc) = docs.iter().find(|d| d.rel == rel) else { return };
+        let changes = match &doc.baseline {
+            Some(base) => {
+                let (s, e) = doc.buffer.bounds();
+                crate::changebar::line_changes(base, &doc.buffer.text(&s, &e, true))
+            }
+            None => Default::default(),
+        };
+        doc.bar.set_changes(changes);
     }
 
     pub fn set_spellcheck(&self, enabled: bool) {

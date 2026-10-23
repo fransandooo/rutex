@@ -5,12 +5,16 @@
   <metadata>
     <property name="line-comment-start">%</property>
   </metadata>
+  <styles>
+    <style id="command" name="Command" map-to="latex:command"/>
+    <style id="included-file" name="Included file" map-to="latex:included-file"/>
+  </styles>
   <definitions>
     <context id="key-argument" class="no-spell-check">
       <match>(\\(?:[a-zA-Z]*cite[a-zA-Z]*|[a-zA-Z]*ref|label|usepackage|RequirePackage|input|include|includeonly|includegraphics|includepdf|subfile|bibliography|bibliographystyle|addbibresource|documentclass|usetheme|usetikzlibrary|usepgfplotslibrary|graphicspath|begin|end|url|href|newcommand|renewcommand|newenvironment|DeclareMathOperator|lstinputlisting|hypersetup|setmainlanguage)\*?)((?:\[[^\]]*\])*)(\{[^{}]*\})</match>
       <include>
-        <context sub-pattern="1" style-ref="latex:command"/>
-        <context sub-pattern="3" style-ref="latex:included-file"/>
+        <context sub-pattern="1" style-ref="command"/>
+        <context sub-pattern="3" style-ref="included-file"/>
       </include>
     </context>
     <context id="rutex-latex">

@@ -1,3 +1,4 @@
+mod changebar;
 mod check;
 mod compiler;
 mod completion;
