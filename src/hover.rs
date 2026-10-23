@@ -8,6 +8,7 @@ use gtk::glib::subclass::prelude::*;
 use gtk::prelude::*;
 use gtk::{gio, glib};
 use sourceview5::subclass::prelude::*;
+use crate::i18n::tr;
 
 /// Dado un buffer y una línea (desde 1), devuelve sus problemas: (es_error, mensaje).
 pub type Lookup = Rc<dyn Fn(&sourceview5::Buffer, u32) -> Vec<(bool, String)>>;
@@ -43,7 +44,7 @@ mod imp {
                 display.append(&bubble(&issues));
             }
             Box::pin(async move {
-                if found { Ok(()) } else { Err(glib::Error::new(gio::IOErrorEnum::NotFound, "sin problemas")) }
+                if found { Ok(()) } else { Err(glib::Error::new(gio::IOErrorEnum::NotFound, "no issues")) }
             })
         }
     }
@@ -70,6 +71,6 @@ fn bubble(issues: &[(bool, String)]) -> gtk::Box {
         row.append(&gtk::Label::builder().label(msg).xalign(0.0).wrap(true).max_width_chars(70).selectable(true).build());
         b.append(&row);
     }
-    b.append(&gtk::Label::builder().label("Clic en el icono del margen para ver la lista de problemas").xalign(0.0).css_classes(["dim-label", "caption"]).build());
+    b.append(&gtk::Label::builder().label(tr("Click the margin icon to see the problems list")).xalign(0.0).css_classes(["dim-label", "caption"]).build());
     b
 }

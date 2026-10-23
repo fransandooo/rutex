@@ -7,6 +7,7 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use gtk::{gdk, glib};
+use crate::i18n::tr;
 
 struct Tab {
     page: adw::TabPage,
@@ -72,7 +73,7 @@ impl TabStrip {
         let label = gtk::Label::builder().label(page.title()).css_classes(["rtab-title"]).build();
         let close = gtk::Button::builder()
             .icon_name("window-close-symbolic")
-            .tooltip_text("Cerrar (Ctrl+W)")
+            .tooltip_text(tr("Close (Ctrl+W)"))
             .css_classes(["flat", "rtab-close"])
             .valign(gtk::Align::Center)
             .build();

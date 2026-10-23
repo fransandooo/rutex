@@ -1,7 +1,12 @@
-//! Plantillas para proyectos nuevos.
+//! Plantillas para proyectos nuevos. Están escritas en inglés con marcas
+//! `@@texto@@` que se traducen al crear el proyecto (incluidas rutas como
+//! `@@chapters@@/`), así que un proyecto en español sale con `babel spanish`,
+//! carpetas `capitulos/` y títulos en español.
 
 use std::fs;
 use std::path::Path;
+
+use crate::i18n::{self, tr};
 
 pub struct Template {
     pub name: &'static str,
@@ -13,50 +18,66 @@ pub struct Template {
 
 pub const TEMPLATES: &[Template] = &[
     Template {
-        name: "Artículo",
-        description: "Documento sencillo con secciones, fórmulas y figuras",
+        name: "Article",
+        description: "Simple document with sections, formulas and figures",
         icon: "x-office-document-symbolic",
-        files: &[("main.tex", ARTICLE), ("figuras/", "")],
+        files: &[("main.tex", ARTICLE), ("@@figures@@/", "")],
     },
     Template {
-        name: "TFM / TFG / Tesis",
-        description: "Capítulos en archivos separados, bibliografía con biblatex y figuras",
+        name: "Thesis (TFM / TFG / PhD)",
+        description: "Chapters in separate files, biblatex bibliography and figures",
         icon: "accessories-dictionary-symbolic",
         files: &[
             ("main.tex", THESIS),
-            ("capitulos/introduccion.tex", "\\chapter{Introducción}\n\\label{cap:introduccion}\n\nContexto y motivación del trabajo~\\cite{knuth1984}.\n\n\\section{Objetivos}\n\n\\section{Estructura del documento}\n"),
-            ("capitulos/estado-del-arte.tex", "\\chapter{Estado del arte}\n\\label{cap:estado-del-arte}\n\n"),
-            ("capitulos/metodologia.tex", "\\chapter{Metodología}\n\\label{cap:metodologia}\n\n"),
-            ("capitulos/resultados.tex", "\\chapter{Resultados}\n\\label{cap:resultados}\n\n"),
-            ("capitulos/conclusiones.tex", "\\chapter{Conclusiones}\n\\label{cap:conclusiones}\n\n\\section{Trabajo futuro}\n"),
-            ("referencias.bib", BIB),
-            ("figuras/", ""),
+            ("@@chapters@@/@@introduction@@.tex", "\\chapter{@@Introduction@@}\n\\label{cap:@@introduction@@}\n\n@@Context and motivation of the work@@~\\cite{knuth1984}.\n\n\\section{@@Objectives@@}\n\n\\section{@@Document structure@@}\n"),
+            ("@@chapters@@/@@state-of-the-art@@.tex", "\\chapter{@@State of the art@@}\n\\label{cap:@@state-of-the-art@@}\n\n"),
+            ("@@chapters@@/@@methodology@@.tex", "\\chapter{@@Methodology@@}\n\\label{cap:@@methodology@@}\n\n"),
+            ("@@chapters@@/@@results@@.tex", "\\chapter{@@Results@@}\n\\label{cap:@@results@@}\n\n"),
+            ("@@chapters@@/@@conclusions@@.tex", "\\chapter{@@Conclusions@@}\n\\label{cap:@@conclusions@@}\n\n\\section{@@Future work@@}\n"),
+            ("@@references@@.bib", BIB),
+            ("@@figures@@/", ""),
         ],
     },
     Template {
-        name: "Apuntes",
-        description: "Notas de clase con teoremas, definiciones y ejemplos",
+        name: "Lecture notes",
+        description: "Class notes with theorems, definitions and examples",
         icon: "accessories-text-editor-symbolic",
         files: &[("main.tex", NOTES)],
     },
     Template {
-        name: "Presentación",
-        description: "Diapositivas con Beamer",
+        name: "Presentation",
+        description: "Beamer slides",
         icon: "x-office-presentation-symbolic",
-        files: &[("main.tex", BEAMER), ("figuras/", "")],
+        files: &[("main.tex", BEAMER), ("@@figures@@/", "")],
     },
-    Template {
-        name: "Vacío",
-        description: "Solo lo imprescindible",
-        icon: "document-new-symbolic",
-        files: &[("main.tex", EMPTY)],
-    },
+    Template { name: "Empty", description: "Just the essentials", icon: "document-new-symbolic", files: &[("main.tex", EMPTY)] },
 ];
+
+/// Sustituye las marcas `@@…@@`: `TITLE` por el título, `BABEL` por la opción
+/// de idioma de babel y el resto por su traducción.
+fn localize(text: &'static str, title: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find("@@") {
+        let Some(len) = rest[start + 2..].find("@@") else { break };
+        out.push_str(&rest[..start]);
+        let token = &rest[start + 2..start + 2 + len];
+        match token {
+            "TITLE" => out.push_str(title),
+            "BABEL" => out.push_str(if i18n::is_spanish() { "spanish,es-tabla" } else { "english" }),
+            t => out.push_str(tr(t)),
+        }
+        rest = &rest[start + 2 + len + 2..];
+    }
+    out.push_str(rest);
+    out
+}
 
 /// Escribe la plantilla en `root` (que debe existir) sin pisar archivos existentes.
 pub fn write(template: &Template, root: &Path, title: &str) -> std::io::Result<()> {
     for (rel, content) in template.files {
-        let path = root.join(rel);
+        let rel = localize(rel, title);
+        let path = root.join(&rel);
         if rel.ends_with('/') {
             fs::create_dir_all(&path)?;
             continue;
@@ -65,7 +86,7 @@ pub fn write(template: &Template, root: &Path, title: &str) -> std::io::Result<(
             fs::create_dir_all(parent)?;
         }
         if !path.exists() {
-            fs::write(&path, content.replace("{{TITULO}}", title))?;
+            fs::write(&path, localize(content, title))?;
         }
     }
     Ok(())
@@ -73,14 +94,15 @@ pub fn write(template: &Template, root: &Path, title: &str) -> std::io::Result<(
 
 const ARTICLE: &str = r"\documentclass[11pt,a4paper]{article}
 \usepackage[T1]{fontenc}
-\usepackage[spanish,es-tabla]{babel}
+\usepackage[@@BABEL@@]{babel}
 \usepackage[margin=2.5cm]{geometry}
 \usepackage{amsmath,amssymb}
 \usepackage{graphicx}
+\graphicspath{{@@figures@@/}}
 \usepackage{booktabs}
 \usepackage[hidelinks]{hyperref}
 
-\title{{{TITULO}}}
+\title{@@TITLE@@}
 \author{}
 \date{\today}
 
@@ -88,32 +110,32 @@ const ARTICLE: &str = r"\documentclass[11pt,a4paper]{article}
 \maketitle
 
 \begin{abstract}
-  Resumen del trabajo.
+  @@Summary of the work.@@
 \end{abstract}
 
-\section{Introducción}
-\label{sec:introduccion}
+\section{@@Introduction@@}
+\label{sec:@@introduction@@}
 
-Empieza a escribir aquí. Las fórmulas van así: $e^{i\pi} + 1 = 0$.
+@@Start writing here. Formulas look like this:@@ $e^{i\pi} + 1 = 0$.
 
 \end{document}
 ";
 
 const THESIS: &str = r"\documentclass[12pt,a4paper,oneside]{report}
 \usepackage[T1]{fontenc}
-\usepackage[spanish,es-tabla]{babel}
+\usepackage[@@BABEL@@]{babel}
 \usepackage[margin=2.5cm]{geometry}
 \usepackage{amsmath,amssymb}
 \usepackage{graphicx}
-\graphicspath{{figuras/}}
+\graphicspath{{@@figures@@/}}
 \usepackage{booktabs}
 \usepackage{csquotes}
 \usepackage[backend=biber,style=numeric,sorting=none]{biblatex}
-\addbibresource{referencias.bib}
+\addbibresource{@@references@@.bib}
 \usepackage[hidelinks]{hyperref}
 
-\title{{{TITULO}}}
-\author{Nombre Apellido}
+\title{@@TITLE@@}
+\author{@@Name Surname@@}
 \date{\today}
 
 \begin{document}
@@ -121,16 +143,16 @@ const THESIS: &str = r"\documentclass[12pt,a4paper,oneside]{report}
 \maketitle
 
 \begin{abstract}
-  Resumen del trabajo.
+  @@Summary of the work.@@
 \end{abstract}
 
 \tableofcontents
 
-\input{capitulos/introduccion}
-\input{capitulos/estado-del-arte}
-\input{capitulos/metodologia}
-\input{capitulos/resultados}
-\input{capitulos/conclusiones}
+\input{@@chapters@@/@@introduction@@}
+\input{@@chapters@@/@@state-of-the-art@@}
+\input{@@chapters@@/@@methodology@@}
+\input{@@chapters@@/@@results@@}
+\input{@@chapters@@/@@conclusions@@}
 
 \printbibliography[heading=bibintoc]
 
@@ -147,25 +169,25 @@ const BIB: &str = r"@book{knuth1984,
 
 const NOTES: &str = r"\documentclass[11pt,a4paper]{article}
 \usepackage[T1]{fontenc}
-\usepackage[spanish,es-tabla]{babel}
+\usepackage[@@BABEL@@]{babel}
 \usepackage[margin=2.2cm]{geometry}
 \usepackage{amsmath,amssymb,amsthm}
 \usepackage{enumitem}
 \usepackage[hidelinks]{hyperref}
 
 \theoremstyle{plain}
-\newtheorem{theorem}{Teorema}[section]
-\newtheorem{lemma}[theorem]{Lema}
+\newtheorem{theorem}{@@Theorem@@}[section]
+\newtheorem{lemma}[theorem]{@@Lemma@@}
 \theoremstyle{definition}
-\newtheorem{definition}[theorem]{Definición}
-\newtheorem{example}[theorem]{Ejemplo}
+\newtheorem{definition}[theorem]{@@Definition@@}
+\newtheorem{example}[theorem]{@@Example@@}
 \theoremstyle{remark}
-\newtheorem*{remark}{Observación}
+\newtheorem*{remark}{@@Remark@@}
 
 \newcommand{\R}{\mathbb{R}}
 \newcommand{\N}{\mathbb{N}}
 
-\title{{{TITULO}}}
+\title{@@TITLE@@}
 \author{}
 \date{}
 
@@ -173,18 +195,18 @@ const NOTES: &str = r"\documentclass[11pt,a4paper]{article}
 \maketitle
 \tableofcontents
 
-\section{Tema 1}
+\section{@@Topic 1@@}
 
 \begin{definition}
-  Un conjunto $A \subseteq \R$ está acotado si existe $M > 0$ con $|a| \le M$ para todo $a \in A$.
+  @@A set $A \subseteq \R$ is bounded if there is $M > 0$ with $|a| \le M$ for every $a \in A$.@@
 \end{definition}
 
 \begin{theorem}
-  Todo conjunto no vacío y acotado superiormente de $\R$ tiene supremo.
+  @@Every non-empty subset of $\R$ that is bounded above has a supremum.@@
 \end{theorem}
 
 \begin{proof}
-  Es el axioma del supremo.
+  @@This is the completeness axiom.@@
 \end{proof}
 
 \end{document}
@@ -192,10 +214,10 @@ const NOTES: &str = r"\documentclass[11pt,a4paper]{article}
 
 const BEAMER: &str = r"\documentclass[aspectratio=169]{beamer}
 \usepackage[T1]{fontenc}
-\usepackage[spanish]{babel}
+\usepackage[@@BABEL@@]{babel}
 \usetheme{metropolis}
 
-\title{{{TITULO}}}
+\title{@@TITLE@@}
 \subtitle{}
 \author{}
 \date{\today}
@@ -204,16 +226,16 @@ const BEAMER: &str = r"\documentclass[aspectratio=169]{beamer}
 
 \maketitle
 
-\begin{frame}{Índice}
+\begin{frame}{@@Contents@@}
   \tableofcontents
 \end{frame}
 
-\section{Introducción}
+\section{@@Introduction@@}
 
-\begin{frame}{Primera diapositiva}
+\begin{frame}{@@First slide@@}
   \begin{itemize}
-    \item Una idea
-    \item Otra idea
+    \item @@An idea@@
+    \item @@Another idea@@
   \end{itemize}
 \end{frame}
 
@@ -225,7 +247,7 @@ const EMPTY: &str = r"\documentclass{article}
 
 \begin{document}
 
-Hola.
+@@Hello.@@
 
 \end{document}
 ";
@@ -234,22 +256,32 @@ Hola.
 mod tests {
     use super::*;
 
-    /// Compila cada plantilla con latexmk. Necesita TeX Live: `cargo test -- --ignored`.
+    /// Compila cada plantilla, en inglés y en español, con latexmk.
+    /// Necesita TeX Live (y texlive-langspanish): `cargo test -- --ignored`.
     #[test]
     #[ignore]
     fn templates_compile() {
-        for (i, t) in TEMPLATES.iter().enumerate() {
-            let dir = std::env::temp_dir().join(format!("rutex-tpl-{}-{i}", std::process::id()));
-            fs::create_dir_all(&dir).unwrap();
-            write(t, &dir, "Prueba").unwrap();
-            let out = std::process::Command::new("latexmk")
-                .args(["-pdf", "-interaction=nonstopmode", "-halt-on-error", "main.tex"])
-                .current_dir(&dir)
-                .output()
-                .unwrap();
-            assert!(out.status.success(), "la plantilla «{}» no compila:\n{}", t.name, String::from_utf8_lossy(&out.stdout));
-            assert!(dir.join("main.pdf").exists());
-            fs::remove_dir_all(&dir).unwrap();
+        for spanish in [false, true] {
+            i18n::set_spanish(spanish);
+            for (i, t) in TEMPLATES.iter().enumerate() {
+                let dir = std::env::temp_dir().join(format!("rutex-tpl-{}-{i}-{spanish}", std::process::id()));
+                fs::create_dir_all(&dir).unwrap();
+                write(t, &dir, "Prueba").unwrap();
+                let out = std::process::Command::new("latexmk")
+                    .args(["-pdf", "-interaction=nonstopmode", "-halt-on-error", "main.tex"])
+                    .current_dir(&dir)
+                    .output()
+                    .unwrap();
+                assert!(out.status.success(), "«{}» (español={spanish}) no compila:\n{}", t.name, String::from_utf8_lossy(&out.stdout));
+                fs::remove_dir_all(&dir).unwrap();
+            }
         }
+        i18n::set_spanish(false);
+    }
+
+    #[test]
+    fn localizes_tokens() {
+        let s = localize("\\graphicspath{{@@figures@@/}} @@TITLE@@ [@@BABEL@@]", "Hola");
+        assert_eq!(s, "\\graphicspath{{figures/}} Hola [english]");
     }
 }

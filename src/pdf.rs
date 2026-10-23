@@ -16,6 +16,7 @@ use gtk::prelude::*;
 use gtk::{cairo, glib, graphene};
 
 use crate::synctex::PdfPos;
+use crate::i18n::{tr, trf};
 
 /// Hilos de Poppler vivos. Hay que cerrarlos antes de salir: si el proceso
 /// termina con un hilo aún liberando su documento, los destructores globales de
@@ -134,7 +135,7 @@ impl PdfView {
         let handle = std::thread::Builder::new()
             .name("rutex-pdf".into())
             .spawn(move || worker(req_rx, resp_tx))
-            .expect("no se pudo crear el hilo del PDF");
+            .expect("could not start the PDF thread");
         WORKERS.lock().unwrap().push((req_tx.clone(), handle));
 
         let model = gtk::StringList::new(&[]);
@@ -146,8 +147,8 @@ impl PdfView {
 
         let status = adw::StatusPage::builder()
             .icon_name("x-office-document-symbolic")
-            .title("Sin PDF todavía")
-            .description("Se compilará automáticamente al escribir.\nCtrl+Intro para compilar ahora.")
+            .title(tr("No PDF yet"))
+            .description(tr("It compiles automatically while you write.\nCtrl+Enter compiles now."))
             .build();
         status.add_css_class("compact");
 
@@ -158,9 +159,9 @@ impl PdfView {
 
         let zoom_label = gtk::Label::builder().label("100%").width_chars(5).build();
         let page_label = gtk::Label::builder().label("–").width_chars(7).css_classes(["numeric"]).build();
-        let zoom_out = gtk::Button::builder().icon_name("zoom-out-symbolic").tooltip_text("Alejar (Ctrl+-)").build();
-        let zoom_in = gtk::Button::builder().icon_name("zoom-in-symbolic").tooltip_text("Acercar (Ctrl++)").build();
-        let fit = gtk::Button::builder().icon_name("zoom-fit-best-symbolic").tooltip_text("Ajustar al ancho (Ctrl+0)").build();
+        let zoom_out = gtk::Button::builder().icon_name("zoom-out-symbolic").tooltip_text(tr("Zoom out (Ctrl+-)")).build();
+        let zoom_in = gtk::Button::builder().icon_name("zoom-in-symbolic").tooltip_text(tr("Zoom in (Ctrl++)")).build();
+        let fit = gtk::Button::builder().icon_name("zoom-fit-best-symbolic").tooltip_text(tr("Fit width (Ctrl+0)")).build();
         let controls = gtk::Box::builder()
             .orientation(gtk::Orientation::Horizontal)
             .spacing(2)
@@ -179,10 +180,10 @@ impl PdfView {
         controls.append(&gtk::Separator::new(gtk::Orientation::Vertical));
         let dark_btn = gtk::ToggleButton::builder()
             .icon_name("weather-clear-night-symbolic")
-            .tooltip_text("PDF en modo oscuro")
+            .tooltip_text(tr("Dark PDF"))
             .active(crate::config::get().pdf_dark)
             .build();
-        let full_btn = gtk::Button::builder().icon_name("view-fullscreen-symbolic").tooltip_text("Ver el PDF en grande (F11)").build();
+        let full_btn = gtk::Button::builder().icon_name("view-fullscreen-symbolic").tooltip_text(tr("Fullscreen PDF (F11)")).build();
         controls.append(&dark_btn);
         controls.append(&full_btn);
 
@@ -312,7 +313,7 @@ impl PdfView {
 
     pub fn set_fullscreen_button(&self, on: bool) {
         self.full_btn.set_icon_name(if on { "view-restore-symbolic" } else { "view-fullscreen-symbolic" });
-        self.full_btn.set_tooltip_text(Some(if on { "Volver al editor (Esc)" } else { "Ver el PDF en grande (F11)" }));
+        self.full_btn.set_tooltip_text(Some(if on { tr("Back to the editor (Esc)") } else { tr("Fullscreen PDF (F11)") }));
     }
 
     pub fn has_document(&self) -> bool {
@@ -578,7 +579,7 @@ impl PdfView {
             }
             Resp::Failed { generation, error } => {
                 if generation == self.state.borrow().generation && !self.has_document() {
-                    self.status.set_description(Some(&format!("No se pudo abrir el PDF:\n{error}")));
+                    self.status.set_description(Some(&trf("Could not open the PDF:\n{}", &[&error])));
                     self.stack.set_visible_child_name("empty");
                 }
             }

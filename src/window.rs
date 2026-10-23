@@ -24,6 +24,7 @@ use crate::prefs::{self, Change};
 use crate::quickopen;
 use crate::project::Project;
 use crate::synctex;
+use crate::i18n::{tr, trf};
 
 thread_local! {
     static PROJECTS: RefCell<Vec<Rc<ProjectWindow>>> = const { RefCell::new(Vec::new()) };
@@ -124,7 +125,7 @@ pub fn setup_app_actions(app: &adw::Application) {
         let Some(app) = weak.upgrade() else { return };
         match demo::install() {
             Ok(root) => open_project(&app, &root, false),
-            Err(e) => report_error(&app, &format!("No se pudo preparar la demo: {e}")),
+            Err(e) => report_error(&app, &trf("Could not prepare the demo: {}", &[&e])),
         }
     });
     app.add_action(&open_demo);
@@ -142,6 +143,12 @@ pub fn setup_app_actions(app: &adw::Application) {
 /// Aplica en caliente un cambio de las preferencias a todas las ventanas.
 fn apply_change(app: &adw::Application, change: Change) {
     match change {
+        Change::Language => {
+            crate::i18n::set_spanish(config::get().spanish);
+            // Fuera del manejador del diálogo, que se destruye con su ventana.
+            let app = app.clone();
+            glib::idle_add_local_once(move || rebuild_windows(&app));
+        }
         Change::Theme => {
             if let Some(action) = app.lookup_action("theme").and_downcast::<gio::SimpleAction>() {
                 action.set_state(&config::get().theme.id().to_variant());
@@ -162,6 +169,26 @@ fn apply_change(app: &adw::Application, change: Change) {
             pw.pdf.refresh_colors();
         }),
         Change::Autocompile => {}
+    }
+}
+
+/// Vuelve a crear todas las ventanas (p. ej. al cambiar de idioma) con los
+/// mismos proyectos abiertos. Todo se guarda al cerrar.
+fn rebuild_windows(app: &adw::Application) {
+    let _hold = app.hold(); // que la app no se cierre al quedarse sin ventanas
+    let roots: Vec<PathBuf> = PROJECTS.with(|p| p.borrow().iter().map(|pw| pw.project.borrow().root.clone()).collect());
+    let projects = PROJECTS.with(|p| p.borrow().clone());
+    for pw in projects {
+        pw.window.close();
+    }
+    if let Some(w) = WELCOME.with(|w| w.borrow_mut().take()).and_then(|w| w.upgrade()) {
+        w.close();
+    }
+    if roots.is_empty() {
+        show_welcome(app);
+    }
+    for root in roots {
+        open_project(app, &root, false);
     }
 }
 
@@ -188,7 +215,7 @@ pub fn activate(app: &adw::Application) {
 /// Abre un proyecto (carpeta o archivo .tex). Si ya está abierto, lo enfoca.
 pub fn open_project(app: &adw::Application, path: &Path, create: bool) {
     let Ok(canon) = fs::canonicalize(path) else {
-        report_error(app, &format!("No existe: {}", path.display()));
+        report_error(app, &trf("Does not exist: {}", &[&path.display()]));
         return;
     };
     let existing = PROJECTS.with(|p| p.borrow().iter().find(|pw| canon.starts_with(&pw.project.borrow().root)).cloned());
@@ -212,13 +239,13 @@ pub fn open_project(app: &adw::Application, path: &Path, create: bool) {
                 w.close();
             }
         }
-        Err(e) => report_error(app, &format!("No se pudo abrir {}:\n{e}", canon.display())),
+        Err(e) => report_error(app, &trf("Could not open {}:\n{}", &[&canon.display(), &e])),
     }
 }
 
 fn report_error(app: &adw::Application, msg: &str) {
     let dialog = adw::AlertDialog::new(Some("rutex"), Some(msg));
-    dialog.add_response("ok", "Aceptar");
+    dialog.add_response("ok", tr("OK"));
     match app.active_window() {
         Some(w) => dialog.present(Some(&w)),
         None => {
@@ -229,7 +256,7 @@ fn report_error(app: &adw::Application, msg: &str) {
 }
 
 fn pick_folder(app: &adw::Application, parent: Option<&gtk::Window>, create: bool) {
-    let title = if create { "Carpeta del nuevo proyecto" } else { "Abrir proyecto" };
+    let title = if create { tr("New project folder") } else { tr("Open project") };
     let dialog = gtk::FileDialog::builder().title(title).modal(true).build();
     let app = app.clone();
     dialog.select_folder(parent, gio::Cancellable::NONE, move |res| {
@@ -249,7 +276,7 @@ fn show_welcome(app: &adw::Application) {
     // Cabecera con el logo.
     let logo = gtk::Image::builder().icon_name("dev.fran.Rutex").pixel_size(72).build();
     let title = gtk::Label::builder().label("rutex").xalign(0.0).css_classes(["title-1"]).build();
-    let subtitle = gtk::Label::builder().label("Editor LaTeX con compilación automática").xalign(0.0).css_classes(["dim-label"]).build();
+    let subtitle = gtk::Label::builder().label(tr("LaTeX editor with live compilation")).xalign(0.0).css_classes(["dim-label"]).build();
     let titles = gtk::Box::builder().orientation(gtk::Orientation::Vertical).valign(gtk::Align::Center).spacing(2).build();
     titles.append(&title);
     titles.append(&subtitle);
@@ -265,10 +292,10 @@ fn show_welcome(app: &adw::Application) {
         b.append(&gtk::Label::builder().label(detail).xalign(0.0).wrap(true).css_classes(["dim-label", "caption"]).build());
         gtk::Button::builder().child(&b).hexpand(true).css_classes(["card", "welcome-action"]).build()
     };
-    let new = action_card("document-new-symbolic", "Nuevo proyecto", "Desde una plantilla: artículo, TFM, apuntes, presentación…");
+    let new = action_card("document-new-symbolic", tr("New project"), tr("From a template: article, thesis, notes, slides…"));
     new.set_action_name(Some("app.new-project"));
-    let open = action_card("folder-open-symbolic", "Abrir carpeta", "Un proyecto LaTeX que ya tengas");
-    let demo = action_card("starred-symbolic", "Ver la demo", "Un proyecto completo con figuras, gráficas y bibliografía");
+    let open = action_card("folder-open-symbolic", tr("Open folder"), tr("A LaTeX project you already have"));
+    let demo = action_card("starred-symbolic", tr("Try the demo"), tr("A complete project with figures, plots and a bibliography"));
     demo.set_action_name(Some("app.open-demo"));
     let actions = gtk::Box::builder().spacing(12).homogeneous(true).build();
     actions.append(&new);
@@ -281,7 +308,7 @@ fn show_welcome(app: &adw::Application) {
 
     let recent = config::get().recent;
     if !recent.is_empty() {
-        let group = adw::PreferencesGroup::builder().title("Recientes").build();
+        let group = adw::PreferencesGroup::builder().title(tr("Recent")).build();
         for path in &recent {
             let row = adw::ActionRow::builder()
                 .title(glib::markup_escape_text(&path.file_name().unwrap_or_default().to_string_lossy()))
@@ -289,7 +316,7 @@ fn show_welcome(app: &adw::Application) {
                 .activatable(true)
                 .build();
             row.add_prefix(&gtk::Image::from_icon_name("folder-symbolic"));
-            let forget = gtk::Button::builder().icon_name("window-close-symbolic").valign(gtk::Align::Center).tooltip_text("Quitar de recientes").css_classes(["flat", "circular"]).build();
+            let forget = gtk::Button::builder().icon_name("window-close-symbolic").valign(gtk::Align::Center).tooltip_text(tr("Remove from recent")).css_classes(["flat", "circular"]).build();
             row.add_suffix(&forget);
             let (a, p) = (app.clone(), path.clone());
             row.connect_activated(move |_| open_project(&a, &p, false));
@@ -302,15 +329,15 @@ fn show_welcome(app: &adw::Application) {
         }
         content.append(&group);
     }
-    content.append(&gtk::Label::builder().label("Ctrl+, preferencias  ·  Ctrl+? atajos de teclado").css_classes(["dim-label", "caption"]).build());
+    content.append(&gtk::Label::builder().label(tr("Ctrl+, preferences  ·  Ctrl+? keyboard shortcuts")).css_classes(["dim-label", "caption"]).build());
 
     let clamp = adw::Clamp::builder().maximum_size(640).child(&content).build();
     let scroller = gtk::ScrolledWindow::builder().child(&clamp).hscrollbar_policy(gtk::PolicyType::Never).build();
     let header = adw::HeaderBar::builder().show_title(false).build();
     let menu = gio::Menu::new();
-    menu.append_submenu(Some("Tema"), &theme_menu());
-    menu.append(Some("Preferencias"), Some("app.preferences"));
-    menu.append(Some("Atajos de teclado"), Some("app.shortcuts"));
+    menu.append_submenu(Some(tr("Theme")), &theme_menu());
+    menu.append(Some(tr("Preferences")), Some("app.preferences"));
+    menu.append(Some(tr("Keyboard shortcuts")), Some("app.shortcuts"));
     header.pack_end(&gtk::MenuButton::builder().icon_name("open-menu-symbolic").menu_model(&menu).build());
     let toolbar = adw::ToolbarView::new();
     toolbar.add_top_bar(&header);
@@ -348,7 +375,7 @@ fn thousands(n: u64) -> String {
     let mut out = String::new();
     for (i, c) in digits.chars().enumerate() {
         if i > 0 && (digits.len() - i) % 3 == 0 {
-            out.push('.');
+            out.push(crate::i18n::thousands_sep());
         }
         out.push(c);
     }
@@ -435,35 +462,35 @@ impl ProjectWindow {
         let header = adw::HeaderBar::new();
         header.set_title_widget(Some(&title));
 
-        let sidebar_btn = gtk::ToggleButton::builder().icon_name("sidebar-show-symbolic").active(true).tooltip_text("Barra lateral (F9)").build();
+        let sidebar_btn = gtk::ToggleButton::builder().icon_name("sidebar-show-symbolic").active(true).tooltip_text(tr("Sidebar (F9)")).build();
         header.pack_start(&sidebar_btn);
 
         let menu = gio::Menu::new();
         let s1 = gio::Menu::new();
-        s1.append(Some("Nuevo proyecto…"), Some("app.new-project"));
-        s1.append(Some("Abrir proyecto…"), Some("win.open"));
-        s1.append(Some("Abrir la demo"), Some("app.open-demo"));
-        s1.append(Some("Nuevo archivo…"), Some("win.new-file"));
-        s1.append(Some("Usar este archivo como principal"), Some("win.set-main"));
+        s1.append(Some(tr("New project…")), Some("app.new-project"));
+        s1.append(Some(tr("Open project…")), Some("win.open"));
+        s1.append(Some(tr("Open the demo")), Some("app.open-demo"));
+        s1.append(Some(tr("New file…")), Some("win.new-file"));
+        s1.append(Some(tr("Use this file as main")), Some("win.set-main"));
         menu.append_section(None, &s1);
         let s2 = gio::Menu::new();
-        s2.append(Some("Guardar PDF en la carpeta del proyecto"), Some("win.export-pdf"));
-        s2.append(Some("Abrir PDF en visor externo"), Some("win.open-pdf"));
-        s2.append(Some("Limpiar archivos auxiliares"), Some("win.clean"));
+        s2.append(Some(tr("Save PDF to the project folder")), Some("win.export-pdf"));
+        s2.append(Some(tr("Open PDF in external viewer")), Some("win.open-pdf"));
+        s2.append(Some(tr("Clean auxiliary files")), Some("win.clean"));
         menu.append_section(None, &s2);
         let s3 = gio::Menu::new();
-        s3.append_submenu(Some("Tema"), &theme_menu());
-        s3.append(Some("Modo Vim"), Some("app.vim"));
+        s3.append_submenu(Some(tr("Theme")), &theme_menu());
+        s3.append(Some(tr("Vim mode")), Some("app.vim"));
         menu.append_section(None, &s3);
         let s4 = gio::Menu::new();
-        s4.append(Some("Preferencias"), Some("app.preferences"));
-        s4.append(Some("Atajos de teclado"), Some("app.shortcuts"));
+        s4.append(Some(tr("Preferences")), Some("app.preferences"));
+        s4.append(Some(tr("Keyboard shortcuts")), Some("app.shortcuts"));
         menu.append_section(None, &s4);
-        let menu_btn = gtk::MenuButton::builder().icon_name("open-menu-symbolic").menu_model(&menu).primary(true).tooltip_text("Menú").build();
+        let menu_btn = gtk::MenuButton::builder().icon_name("open-menu-symbolic").menu_model(&menu).primary(true).tooltip_text(tr("Menu")).build();
 
         let compile_btn = gtk::Button::builder()
             .icon_name("media-playback-start-symbolic")
-            .tooltip_text("Compilar (Ctrl+Intro)")
+            .tooltip_text(tr("Compile (Ctrl+Enter)"))
             .action_name("win.compile")
             .css_classes(["compile-button"])
             .build();
@@ -471,12 +498,12 @@ impl ProjectWindow {
         // Estado de la compilación: también abre el panel de problemas.
         let spinner = adw::Spinner::builder().visible(false).build();
         let status_icon = gtk::Image::from_icon_name("emblem-ok-symbolic");
-        let status = gtk::Label::new(Some("Listo"));
+        let status = gtk::Label::new(Some(tr("Ready")));
         let status_box = gtk::Box::builder().spacing(6).build();
         status_box.append(&spinner);
         status_box.append(&status_icon);
         status_box.append(&status);
-        let issues_btn = gtk::ToggleButton::builder().child(&status_box).tooltip_text("Problemas y salida (Ctrl+E)").css_classes(["flat", "compile-status"]).build();
+        let issues_btn = gtk::ToggleButton::builder().child(&status_box).tooltip_text(tr("Problems and output (Ctrl+E)")).css_classes(["flat", "compile-status"]).build();
 
         header.pack_end(&menu_btn);
         header.pack_end(&compile_btn);
@@ -485,13 +512,13 @@ impl ProjectWindow {
         // --- Barra lateral ---
         let tree = FileTree::new(project.root.clone(), project.main.clone());
         let sections = adw::ToggleGroup::builder().css_classes(["round", "sidebar-switcher"]).homogeneous(true).hexpand(true).build();
-        sections.add(adw::Toggle::builder().name("files").label("Archivos").build());
-        sections.add(adw::Toggle::builder().name("outline").label("Esquema").build());
+        sections.add(adw::Toggle::builder().name("files").label(tr("Files")).build());
+        sections.add(adw::Toggle::builder().name("outline").label(tr("Outline")).build());
         sections.set_active_name(Some("files"));
-        let new_file_btn = gtk::Button::builder().icon_name("document-new-symbolic").tooltip_text("Nuevo archivo (Ctrl+N)").action_name("win.new-file").css_classes(["flat"]).build();
+        let new_file_btn = gtk::Button::builder().icon_name("document-new-symbolic").tooltip_text(tr("New file (Ctrl+N)")).action_name("win.new-file").css_classes(["flat"]).build();
         let new_folder_btn = gtk::Button::builder()
             .icon_name("folder-new-symbolic")
-            .tooltip_text("Nueva carpeta")
+            .tooltip_text(tr("New folder"))
             .action_name("win.tree-new-folder")
             .action_target(&"".to_variant())
             .css_classes(["flat"])
@@ -510,7 +537,7 @@ impl ProjectWindow {
 
         let outline_list = gtk::ListBox::builder().css_classes(["navigation-sidebar", "outline"]).build();
         outline_list.set_placeholder(Some(
-            &gtk::Label::builder().label("Sin secciones todavía.\nUsa \\section{…}").justify(gtk::Justification::Center).css_classes(["dim-label"]).margin_top(24).build(),
+            &gtk::Label::builder().label(tr("No sections yet.\nUse \\section{…}")).justify(gtk::Justification::Center).css_classes(["dim-label"]).margin_top(24).build(),
         ));
         let outline_scroller = gtk::ScrolledWindow::builder().child(&outline_list).hscrollbar_policy(gtk::PolicyType::Never).vexpand(true).build();
 
@@ -527,8 +554,8 @@ impl ProjectWindow {
         let issues_list = gtk::ListBox::builder().css_classes(["issues"]).build();
         let output = gtk::TextView::builder().editable(false).monospace(true).wrap_mode(gtk::WrapMode::WordChar).left_margin(10).top_margin(6).build();
         let issues_stack = gtk::Stack::new();
-        issues_stack.add_titled(&gtk::ScrolledWindow::builder().child(&issues_list).build(), Some("issues"), "Problemas");
-        issues_stack.add_titled(&gtk::ScrolledWindow::builder().child(&output).build(), Some("output"), "Salida de latexmk");
+        issues_stack.add_titled(&gtk::ScrolledWindow::builder().child(&issues_list).build(), Some("issues"), tr("Problems"));
+        issues_stack.add_titled(&gtk::ScrolledWindow::builder().child(&output).build(), Some("output"), tr("latexmk output"));
         issues_stack.set_vexpand(true);
         let switcher = gtk::StackSwitcher::builder().stack(&issues_stack).halign(gtk::Align::Start).build();
         let close_issues = gtk::Button::builder().icon_name("window-close-symbolic").css_classes(["flat", "circular"]).halign(gtk::Align::End).hexpand(true).action_name("win.toggle-issues").build();
@@ -760,7 +787,7 @@ impl ProjectWindow {
                 let Some(this) = weak.upgrade() else { return };
                 match found.and_then(|(input, line)| p.relativize(&input).map(|rel| (rel, line))) {
                     Some((rel, line)) => this.goto(&rel, line),
-                    None => this.toast("SyncTeX no encontró esa posición"),
+                    None => this.toast(tr("SyncTeX could not find that position")),
                 }
             });
         });
@@ -856,7 +883,7 @@ impl ProjectWindow {
         add_path("tree-copy-path", Box::new(|t, rel| {
             let abs = t.project.borrow().root.join(&rel);
             t.window.clipboard().set_text(&abs.to_string_lossy());
-            t.toast("Ruta copiada");
+            t.toast(tr("Path copied"));
         }));
         add_path("tree-reveal", Box::new(|t, rel| {
             let abs = t.project.borrow().root.join(&rel);
@@ -987,7 +1014,7 @@ impl ProjectWindow {
             .default_response("ok")
             .close_response("cancel")
             .build();
-        dialog.add_responses(&[("cancel", "Cancelar"), ("ok", ok_label)]);
+        dialog.add_responses(&[("cancel", tr("Cancel")), ("ok", ok_label)]);
         dialog.set_response_appearance("ok", adw::ResponseAppearance::Suggested);
         let weak = Rc::downgrade(self);
         let input = entry.clone();
@@ -995,7 +1022,7 @@ impl ProjectWindow {
             let Some(this) = weak.upgrade() else { return };
             let text = input.text().trim().trim_matches('/').to_string();
             if text.is_empty() || text.split('/').any(|c| c == ".." || c.is_empty()) {
-                this.toast("Nombre no válido");
+                this.toast(tr("Invalid name"));
                 return;
             }
             on_ok(&this, PathBuf::from(text));
@@ -1055,7 +1082,7 @@ impl ProjectWindow {
         match compiler::spawn(&project) {
             Ok(running) => {
                 self.compile.borrow_mut().pid = Some(running.pid);
-                self.set_status(Status::Busy, "Compilando…");
+                self.set_status(Status::Busy, tr("Compiling…"));
                 self.engine_label.set_label(running.engine.label());
                 let weak = Rc::downgrade(self);
                 glib::spawn_future_local(async move {
@@ -1068,11 +1095,11 @@ impl ProjectWindow {
             Err(e) => {
                 self.compile.replace(CompileState::default());
                 let msg = if e.kind() == std::io::ErrorKind::NotFound {
-                    "No se encontró latexmk. Instala TeX Live:\n\nsudo pacman -S --needed texlive-basic texlive-latex texlive-latexrecommended \\\n  texlive-latexextra texlive-fontsrecommended texlive-bibtexextra texlive-mathscience \\\n  texlive-langspanish texlive-binextra texlive-xetex texlive-luatex biber".to_string()
+                    format!("{}\n\nsudo pacman -S --needed texlive-basic texlive-latex texlive-latexrecommended \\\n  texlive-latexextra texlive-fontsrecommended texlive-bibtexextra texlive-mathscience \\\n  texlive-binextra texlive-xetex texlive-luatex biber\n\n{}", tr("latexmk was not found. Install TeX Live, for example on Arch:"), tr("On Debian/Ubuntu: texlive-full or texlive-latex-extra + latexmk. On Fedora: texlive-scheme-medium + latexmk."))
                 } else {
-                    format!("No se pudo lanzar latexmk: {e}")
+                    trf("Could not run latexmk: {}", &[&e])
                 };
-                self.set_status(Status::Error, "Sin TeX");
+                self.set_status(Status::Error, tr("No TeX"));
                 self.output.buffer().set_text(&msg);
                 self.issues_stack.set_visible_child_name("output");
                 self.issues_btn.set_active(true);
@@ -1115,13 +1142,13 @@ impl ProjectWindow {
         *self.issues.borrow_mut() = shown;
         self.output.buffer().set_text(&outcome.output);
 
-        let secs = format!("{:.1}", outcome.elapsed.as_secs_f64()).replace('.', ",");
+        let secs = crate::i18n::decimal(outcome.elapsed.as_secs_f64());
         match (errors, warnings) {
-            (0, _) if !outcome.ok && outcome.pdf.is_none() => self.set_status(Status::Error, "Falló la compilación"),
+            (0, _) if !outcome.ok && outcome.pdf.is_none() => self.set_status(Status::Error, tr("Build failed")),
             (0, 0) => self.set_status(Status::Ok, &format!("{secs} s")),
-            (0, w) => self.set_status(Status::Warning, &format!("{w} {}", if w == 1 { "aviso" } else { "avisos" })),
-            (1, _) => self.set_status(Status::Error, "1 error"),
-            (e, _) => self.set_status(Status::Error, &format!("{e} errores")),
+            (0, w) => self.set_status(Status::Warning, &if w == 1 { tr("1 warning").to_string() } else { trf("{} warnings", &[&w]) }),
+            (1, _) => self.set_status(Status::Error, tr(tr("1 error"))),
+            (e, _) => self.set_status(Status::Error, &trf("{} errors", &[&e])),
         }
 
         if let Some((path, mtime)) = outcome.pdf {
@@ -1146,7 +1173,7 @@ impl ProjectWindow {
         glib::spawn_future_local(async move {
             let words = compiler::word_count(p.root, p.main).await;
             if let (Some(this), Some(n)) = (weak.upgrade(), words) {
-                this.words_label.set_label(&format!("{} palabras", thousands(n)));
+                this.words_label.set_label(&trf("{} words", &[&thousands(n)]));
             }
         });
     }
@@ -1197,7 +1224,7 @@ impl ProjectWindow {
             let location = match (&issue.file, issue.line) {
                 (Some(f), Some(l)) => format!("{}:{l}", f.display()),
                 (Some(f), None) => f.display().to_string(),
-                (None, Some(l)) => format!("línea {l}"),
+                (None, Some(l)) => trf("line {}", &[&l]),
                 (None, None) => String::new(),
             };
             if !location.is_empty() {
@@ -1230,7 +1257,7 @@ impl ProjectWindow {
             let Some(this) = weak.upgrade() else { return };
             match pos {
                 Some(pos) => this.pdf.reveal(pos),
-                None => this.toast("SyncTeX no encontró esa línea en el PDF"),
+                None => this.toast(tr("SyncTeX could not find that line in the PDF")),
             }
         });
     }
@@ -1250,9 +1277,9 @@ impl ProjectWindow {
 
     fn goto_line_dialog(self: &Rc<Self>) {
         let Some(rel) = self.editor.current() else { return };
-        let entry = gtk::Entry::builder().input_purpose(gtk::InputPurpose::Digits).activates_default(true).placeholder_text("Número de línea").build();
-        let dialog = adw::AlertDialog::builder().heading("Ir a la línea").extra_child(&entry).default_response("go").close_response("cancel").build();
-        dialog.add_responses(&[("cancel", "Cancelar"), ("go", "Ir")]);
+        let entry = gtk::Entry::builder().input_purpose(gtk::InputPurpose::Digits).activates_default(true).placeholder_text(tr("Line number")).build();
+        let dialog = adw::AlertDialog::builder().heading(tr("Go to line")).extra_child(&entry).default_response("go").close_response("cancel").build();
+        dialog.add_responses(&[("cancel", tr("Cancel")), ("go", tr("Go"))]);
         dialog.set_response_appearance("go", adw::ResponseAppearance::Suggested);
         let weak = Rc::downgrade(self);
         let input = entry.clone();
@@ -1267,7 +1294,7 @@ impl ProjectWindow {
 
     fn new_file_dialog(self: &Rc<Self>, dir: &Path) {
         let initial = if dir.as_os_str().is_empty() { String::new() } else { format!("{}/", dir.display()) };
-        self.ask_path("Nuevo archivo", "Ruta dentro del proyecto. Si no pones extensión, será .tex.", &initial, "Crear", |this, mut rel| {
+        self.ask_path(tr("New file"), tr("Path inside the project. Without an extension it will be .tex."), &initial, tr("Create"), |this, mut rel| {
             if rel.extension().is_none() {
                 rel.set_extension("tex");
             }
@@ -1275,11 +1302,11 @@ impl ProjectWindow {
             if !abs.exists() {
                 let created = abs.parent().map_or(Ok(()), fs::create_dir_all).and_then(|_| fs::write(&abs, ""));
                 if let Err(e) = created {
-                    this.toast(&format!("No se pudo crear: {e}"));
+                    this.toast(&trf("Could not create it: {}", &[&e]));
                     return;
                 }
                 if crate::project::has_ext(&rel, "tex") {
-                    this.toast(&format!("Inclúyelo con \\input{{{}}}", rel.with_extension("").display()));
+                    this.toast(&trf("Include it with \\input{{}}", &[&rel.with_extension("").display()]));
                 }
             }
             this.refresh_files();
@@ -1289,10 +1316,10 @@ impl ProjectWindow {
 
     fn new_folder_dialog(self: &Rc<Self>, dir: &Path) {
         let initial = if dir.as_os_str().is_empty() { String::new() } else { format!("{}/", dir.display()) };
-        self.ask_path("Nueva carpeta", "Ruta dentro del proyecto", &initial, "Crear", |this, rel| {
+        self.ask_path(tr("New folder"), tr("Path inside the project"), &initial, tr("Create"), |this, rel| {
             let abs = this.project.borrow().root.join(&rel);
             if let Err(e) = fs::create_dir_all(&abs) {
-                this.toast(&format!("No se pudo crear: {e}"));
+                this.toast(&trf("Could not create it: {}", &[&e]));
                 return;
             }
             this.refresh_files();
@@ -1302,19 +1329,19 @@ impl ProjectWindow {
 
     fn rename_dialog(self: &Rc<Self>, rel: &Path) {
         let from = rel.to_path_buf();
-        let body = format!("Nuevo nombre o ruta para «{}»", rel.display());
-        self.ask_path("Renombrar", &body, &rel.display().to_string(), "Renombrar", move |this, to| {
+        let body = trf("New name or path for “{}”", &[&rel.display()]);
+        self.ask_path(tr("Rename"), &body, &rel.display().to_string(), tr("Rename"), move |this, to| {
             if to == from {
                 return;
             }
             let root = this.project.borrow().root.clone();
             if root.join(&to).exists() {
-                this.toast(&format!("Ya existe {}", to.display()));
+                this.toast(&trf("{} already exists", &[&to.display()]));
                 return;
             }
             let moved = to.parent().map_or(Ok(()), |p| fs::create_dir_all(root.join(p))).and_then(|_| fs::rename(root.join(&from), root.join(&to)));
             if let Err(e) = moved {
-                this.toast(&format!("No se pudo renombrar: {e}"));
+                this.toast(&trf("Could not rename: {}", &[&e]));
                 return;
             }
             this.editor.rename(&from, &to);
@@ -1329,12 +1356,12 @@ impl ProjectWindow {
 
     fn trash_dialog(self: &Rc<Self>, rel: &Path) {
         let dialog = adw::AlertDialog::builder()
-            .heading("¿Mover a la papelera?")
-            .body(format!("«{}» se moverá a la papelera. Podrás recuperarlo desde tu gestor de archivos.", rel.display()))
+            .heading(tr("Move to trash?"))
+            .body(trf("“{}” will be moved to the trash. You can restore it from your file manager.", &[&rel.display()]))
             .default_response("cancel")
             .close_response("cancel")
             .build();
-        dialog.add_responses(&[("cancel", "Cancelar"), ("trash", "Mover a la papelera")]);
+        dialog.add_responses(&[("cancel", tr("Cancel")), ("trash", tr("Move to trash"))]);
         dialog.set_response_appearance("trash", adw::ResponseAppearance::Destructive);
         let weak = Rc::downgrade(self);
         let rel = rel.to_path_buf();
@@ -1346,10 +1373,10 @@ impl ProjectWindow {
                     this.editor.forget(&rel);
                     this.refresh_files();
                     if this.project.borrow().main.starts_with(&rel) {
-                        this.toast("Has borrado el archivo principal: elige otro con clic derecho → Usar como archivo principal");
+                        this.toast(tr("You removed the main file: pick another with right click → Use as main file"));
                     }
                 }
-                Err(e) => this.toast(&format!("No se pudo mover a la papelera: {e}")),
+                Err(e) => this.toast(&trf("Could not move it to the trash: {}", &[&e])),
             }
         });
         dialog.present(Some(&self.window));
@@ -1358,7 +1385,7 @@ impl ProjectWindow {
     fn set_main(self: &Rc<Self>, rel: &Path) {
         let rel = rel.to_path_buf();
         if !crate::project::has_ext(&rel, "tex") {
-            self.toast("El archivo principal debe ser un .tex");
+            self.toast(tr("The main file must be a .tex file"));
             return;
         }
         let root = {
@@ -1369,7 +1396,7 @@ impl ProjectWindow {
         config::update(|c| c.set_main(root, rel.clone()));
         self.pdf_mtime.set(None);
         self.tree.set_main(rel.clone());
-        self.toast(&format!("Archivo principal: {}", rel.display()));
+        self.toast(&trf("Main file: {}", &[&rel.display()]));
         self.compile();
     }
 
@@ -1378,15 +1405,15 @@ impl ProjectWindow {
         let src = p.pdf_path();
         let dst = p.root.join(src.file_name().unwrap());
         match fs::copy(&src, &dst) {
-            Ok(_) => self.toast(&format!("PDF guardado en {}", dst.display())),
-            Err(_) => self.toast("Todavía no hay PDF"),
+            Ok(_) => self.toast(&trf("PDF saved to {}", &[&dst.display()])),
+            Err(_) => self.toast(tr("There is no PDF yet")),
         }
     }
 
     fn open_pdf_external(&self) {
         let path = self.project.borrow().pdf_path();
         if !path.exists() {
-            self.toast("Todavía no hay PDF");
+            self.toast(tr("There is no PDF yet"));
             return;
         }
         gtk::FileLauncher::new(Some(&gio::File::for_path(path))).launch(Some(&self.window), gio::Cancellable::NONE, |_| {});
@@ -1399,7 +1426,7 @@ impl ProjectWindow {
         let dir = self.project.borrow().build_dir.clone();
         let _ = fs::remove_dir_all(&dir);
         self.pdf_mtime.set(None);
-        self.toast("Archivos auxiliares eliminados");
+        self.toast(tr("Auxiliary files removed"));
         // Si había una compilación en marcha, su final relanzará otra.
         if self.compile.borrow().running {
             self.compile.borrow_mut().pending = true;

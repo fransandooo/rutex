@@ -224,7 +224,7 @@ fn styles_dir() -> PathBuf {
 
 /// Inicializa el tema. Llamar una vez tras crear el display.
 pub fn init() {
-    let display = gtk::gdk::Display::default().expect("sin display");
+    let display = gtk::gdk::Display::default().expect("no display");
     let css = gtk::CssProvider::new();
     let font_css = gtk::CssProvider::new();
     // Por encima de libadwaita pero por debajo de la hoja de estilos propia.

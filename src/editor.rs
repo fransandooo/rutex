@@ -18,6 +18,7 @@ use crate::config;
 use crate::hover::IssueHover;
 use crate::keys;
 use crate::tabs::TabStrip;
+use crate::i18n::{tr, trf};
 
 struct Doc {
     rel: PathBuf,
@@ -67,15 +68,15 @@ impl Editor {
 
         let empty = adw::StatusPage::builder()
             .icon_name("text-x-generic-symbolic")
-            .title("Ningún archivo abierto")
-            .description("Elige uno en la barra lateral o pulsa Ctrl+P")
+            .title(tr("No open files"))
+            .description(tr("Pick one in the sidebar or press Ctrl+P"))
             .css_classes(["compact"])
             .build();
         let stack = gtk::Stack::builder().vexpand(true).build();
         stack.add_named(&tab_view, Some("tabs"));
         stack.add_named(&empty, Some("empty"));
 
-        let search_entry = gtk::SearchEntry::builder().placeholder_text("Buscar en el archivo…").width_chars(32).build();
+        let search_entry = gtk::SearchEntry::builder().placeholder_text(tr("Find in file…")).width_chars(32).build();
         let search_bar = gtk::SearchBar::builder().child(&search_entry).show_close_button(true).build();
         search_bar.connect_entry(&search_entry);
 
@@ -222,8 +223,8 @@ impl Editor {
 
     fn load(self: &Rc<Self>, rel: &Path) -> Result<adw::TabPage, String> {
         let abs = self.root.join(rel);
-        let bytes = fs::read(&abs).map_err(|e| format!("No se pudo abrir {}: {e}", rel.display()))?;
-        let text = String::from_utf8(bytes).map_err(|_| format!("{} no está en UTF-8", rel.display()))?;
+        let bytes = fs::read(&abs).map_err(|e| trf("Could not open {}: {}", &[&rel.display(), &e]))?;
+        let text = String::from_utf8(bytes).map_err(|_| trf("{} is not UTF-8", &[&rel.display()]))?;
 
         let buffer = sourceview5::Buffer::new(None);
         let is_tex_like = ["tex", "sty", "cls", "ltx", "dtx", "bbx", "cbx", "def", "cfg"].iter().any(|e| crate::project::has_ext(rel, e));
@@ -328,7 +329,7 @@ impl Editor {
         let abs = self.root.join(&doc.rel);
         let mut warning = None;
         if doc.mtime.is_some() && mtime(&abs) != doc.mtime {
-            warning = Some(format!("{} había cambiado fuera de rutex; se ha sobrescrito", doc.rel.display()));
+            warning = Some(trf("{} had changed outside rutex; it was overwritten", &[&doc.rel.display()]));
         }
         let (start, end) = doc.buffer.bounds();
         let text = doc.buffer.text(&start, &end, true);
@@ -338,7 +339,7 @@ impl Editor {
                 doc.mtime = mtime(&abs);
                 warning
             }
-            Err(e) => Some(format!("No se pudo guardar {}: {e}", doc.rel.display())),
+            Err(e) => Some(trf("Could not save {}: {}", &[&doc.rel.display(), &e])),
         }
     }
 

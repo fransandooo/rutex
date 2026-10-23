@@ -2,6 +2,7 @@
 
 use std::fs;
 use std::path::PathBuf;
+use crate::i18n::tr;
 
 const MAX_RECENT: usize = 12;
 
@@ -28,10 +29,10 @@ impl ThemeMode {
 
     pub fn label(self) -> &'static str {
         match self {
-            ThemeMode::Auto => "Omarchy (automático)",
-            ThemeMode::System => "Sistema",
-            ThemeMode::Light => "Claro",
-            ThemeMode::Dark => "Oscuro",
+            ThemeMode::Auto => tr("Omarchy (automatic)"),
+            ThemeMode::System => tr("System"),
+            ThemeMode::Light => tr("Light"),
+            ThemeMode::Dark => tr("Dark"),
         }
     }
 
@@ -42,6 +43,8 @@ impl ThemeMode {
 
 #[derive(Clone)]
 pub struct Config {
+    /// Idioma de la interfaz: false = inglés (por defecto), true = español.
+    pub spanish: bool,
     pub theme: ThemeMode,
     pub font_size: u32,
     pub vim: bool,
@@ -58,6 +61,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Config {
         Config {
+            spanish: false,
             theme: ThemeMode::Auto,
             font_size: 11,
             vim: false,
@@ -84,6 +88,7 @@ impl Config {
             let Some((k, v)) = line.split_once('=') else { continue };
             let flag = v.trim() == "true";
             match k.trim() {
+                "language" => cfg.spanish = v.trim() == "es",
                 "theme" => cfg.theme = ThemeMode::parse(v.trim()),
                 "font_size" => cfg.font_size = v.trim().parse().unwrap_or(cfg.font_size).clamp(7, 32),
                 "vim" => cfg.vim = flag,
@@ -107,6 +112,7 @@ impl Config {
 
     pub fn save(&self) {
         let mut out = String::new();
+        out.push_str(&format!("language={}\n", if self.spanish { "es" } else { "en" }));
         out.push_str(&format!("theme={}\n", self.theme.id()));
         out.push_str(&format!("font_size={}\n", self.font_size));
         out.push_str(&format!("vim={}\n", self.vim));

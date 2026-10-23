@@ -15,6 +15,7 @@ use sourceview5::prelude::*;
 use gtk::glib::subclass::prelude::*;
 use sourceview5::subclass::prelude::*;
 
+use crate::i18n::tr;
 use crate::index::Index;
 
 /// Datos del proyecto que usa el autocompletado (los actualiza la ventana).
@@ -95,87 +96,87 @@ pub fn analyze(before: &str) -> Option<Context> {
 
 // (etiqueta mostrada, texto/snippet a insertar, descripción)
 const COMMANDS: &[(&str, &str, &str)] = &[
-    ("begin", "\\begin{${1:entorno}}\n\t${2}\n\\end{$1}$0", "Entorno"),
-    ("section", "\\section{${1}}$0", "Sección"),
-    ("subsection", "\\subsection{${1}}$0", "Subsección"),
-    ("subsubsection", "\\subsubsection{${1}}$0", "Subsubsección"),
-    ("chapter", "\\chapter{${1}}$0", "Capítulo"),
-    ("part", "\\part{${1}}$0", "Parte"),
-    ("paragraph", "\\paragraph{${1}}$0", "Párrafo"),
-    ("textbf", "\\textbf{${1}}$0", "Negrita"),
-    ("textit", "\\textit{${1}}$0", "Cursiva"),
-    ("emph", "\\emph{${1}}$0", "Énfasis"),
-    ("underline", "\\underline{${1}}$0", "Subrayado"),
-    ("texttt", "\\texttt{${1}}$0", "Monoespaciado"),
-    ("textsc", "\\textsc{${1}}$0", "Versalitas"),
-    ("footnote", "\\footnote{${1}}$0", "Nota al pie"),
-    ("label", "\\label{${1}}$0", "Etiqueta"),
-    ("ref", "\\ref{${1}}$0", "Referencia"),
-    ("eqref", "\\eqref{${1}}$0", "Referencia a ecuación"),
-    ("autoref", "\\autoref{${1}}$0", "Referencia con nombre"),
-    ("cref", "\\cref{${1}}$0", "Referencia (cleveref)"),
-    ("pageref", "\\pageref{${1}}$0", "Página de una etiqueta"),
-    ("cite", "\\cite{${1}}$0", "Cita"),
-    ("parencite", "\\parencite{${1}}$0", "Cita entre paréntesis"),
-    ("textcite", "\\textcite{${1}}$0", "Cita en el texto"),
-    ("citep", "\\citep{${1}}$0", "Cita (natbib)"),
-    ("citet", "\\citet{${1}}$0", "Cita textual (natbib)"),
+    ("begin", "\\begin{${1:env}}\n\t${2}\n\\end{$1}$0", "Environment"),
+    ("section", "\\section{${1}}$0", "Section"),
+    ("subsection", "\\subsection{${1}}$0", "Subsection"),
+    ("subsubsection", "\\subsubsection{${1}}$0", "Subsubsection"),
+    ("chapter", "\\chapter{${1}}$0", "Chapter"),
+    ("part", "\\part{${1}}$0", "Part"),
+    ("paragraph", "\\paragraph{${1}}$0", "Paragraph"),
+    ("textbf", "\\textbf{${1}}$0", "Bold"),
+    ("textit", "\\textit{${1}}$0", "Italic"),
+    ("emph", "\\emph{${1}}$0", "Emphasis"),
+    ("underline", "\\underline{${1}}$0", "Underline"),
+    ("texttt", "\\texttt{${1}}$0", "Monospace"),
+    ("textsc", "\\textsc{${1}}$0", "Small caps"),
+    ("footnote", "\\footnote{${1}}$0", "Footnote"),
+    ("label", "\\label{${1}}$0", "Label"),
+    ("ref", "\\ref{${1}}$0", "Reference"),
+    ("eqref", "\\eqref{${1}}$0", "Equation reference"),
+    ("autoref", "\\autoref{${1}}$0", "Named reference"),
+    ("cref", "\\cref{${1}}$0", "Reference (cleveref)"),
+    ("pageref", "\\pageref{${1}}$0", "Page of a label"),
+    ("cite", "\\cite{${1}}$0", "Citation"),
+    ("parencite", "\\parencite{${1}}$0", "Parenthetical citation"),
+    ("textcite", "\\textcite{${1}}$0", "Textual citation"),
+    ("citep", "\\citep{${1}}$0", "Citation (natbib)"),
+    ("citet", "\\citet{${1}}$0", "Textual citation (natbib)"),
     ("url", "\\url{${1}}$0", "URL"),
-    ("href", "\\href{${1:url}}{${2:texto}}$0", "Enlace"),
-    ("includegraphics", "\\includegraphics[width=${1:0.8}\\linewidth]{${2}}$0", "Imagen"),
-    ("caption", "\\caption{${1}}$0", "Pie de figura/tabla"),
-    ("centering", "\\centering", "Centrar"),
-    ("item", "\\item ${0}", "Elemento de lista"),
-    ("input", "\\input{${1}}$0", "Incluir archivo"),
-    ("include", "\\include{${1}}$0", "Incluir capítulo"),
-    ("usepackage", "\\usepackage{${1}}$0", "Paquete"),
-    ("documentclass", "\\documentclass[${1:12pt,a4paper}]{${2:article}}$0", "Clase de documento"),
-    ("title", "\\title{${1}}$0", "Título"),
-    ("author", "\\author{${1}}$0", "Autor"),
-    ("date", "\\date{${1:\\today}}$0", "Fecha"),
-    ("maketitle", "\\maketitle", "Portada"),
-    ("tableofcontents", "\\tableofcontents", "Índice"),
-    ("listoffigures", "\\listoffigures", "Índice de figuras"),
-    ("listoftables", "\\listoftables", "Índice de tablas"),
-    ("newpage", "\\newpage", "Nueva página"),
-    ("clearpage", "\\clearpage", "Nueva página (vacía flotantes)"),
-    ("noindent", "\\noindent", "Sin sangría"),
-    ("vspace", "\\vspace{${1:1em}}$0", "Espacio vertical"),
-    ("hspace", "\\hspace{${1:1em}}$0", "Espacio horizontal"),
-    ("newcommand", "\\newcommand{\\${1:nombre}}{${2}}$0", "Nuevo comando"),
-    ("bibliography", "\\bibliography{${1:referencias}}$0", "Bibliografía (BibTeX)"),
-    ("bibliographystyle", "\\bibliographystyle{${1:plain}}$0", "Estilo bibliográfico"),
-    ("printbibliography", "\\printbibliography", "Bibliografía (biblatex)"),
-    ("addbibresource", "\\addbibresource{${1:referencias.bib}}$0", "Archivo .bib (biblatex)"),
-    ("today", "\\today", "Fecha de hoy"),
-    ("hline", "\\hline", "Línea de tabla"),
+    ("href", "\\href{${1:url}}{${2:text}}$0", "Link"),
+    ("includegraphics", "\\includegraphics[width=${1:0.8}\\linewidth]{${2}}$0", "Image"),
+    ("caption", "\\caption{${1}}$0", "Figure/table caption"),
+    ("centering", "\\centering", "Center"),
+    ("item", "\\item ${0}", "List item"),
+    ("input", "\\input{${1}}$0", "Include file"),
+    ("include", "\\include{${1}}$0", "Include chapter"),
+    ("usepackage", "\\usepackage{${1}}$0", "Package"),
+    ("documentclass", "\\documentclass[${1:12pt,a4paper}]{${2:article}}$0", "Document class"),
+    ("title", "\\title{${1}}$0", "Title"),
+    ("author", "\\author{${1}}$0", "Author"),
+    ("date", "\\date{${1:\\today}}$0", "Date"),
+    ("maketitle", "\\maketitle", "Title page"),
+    ("tableofcontents", "\\tableofcontents", "Table of contents"),
+    ("listoffigures", "\\listoffigures", "List of figures"),
+    ("listoftables", "\\listoftables", "List of tables"),
+    ("newpage", "\\newpage", "New page"),
+    ("clearpage", "\\clearpage", "New page (flushes floats)"),
+    ("noindent", "\\noindent", "No indent"),
+    ("vspace", "\\vspace{${1:1em}}$0", "Vertical space"),
+    ("hspace", "\\hspace{${1:1em}}$0", "Horizontal space"),
+    ("newcommand", "\\newcommand{\\${1:name}}{${2}}$0", "New command"),
+    ("bibliography", "\\bibliography{${1:references}}$0", "Bibliography (BibTeX)"),
+    ("bibliographystyle", "\\bibliographystyle{${1:plain}}$0", "Bibliography style"),
+    ("printbibliography", "\\printbibliography", "Bibliography (biblatex)"),
+    ("addbibresource", "\\addbibresource{${1:references.bib}}$0", ".bib file (biblatex)"),
+    ("today", "\\today", "Today's date"),
+    ("hline", "\\hline", "Table rule"),
     ("toprule", "\\toprule", "booktabs"),
     ("midrule", "\\midrule", "booktabs"),
     ("bottomrule", "\\bottomrule", "booktabs"),
-    ("multicolumn", "\\multicolumn{${1:2}}{${2:c}}{${3}}$0", "Celda combinada"),
-    ("textwidth", "\\textwidth", "Ancho del texto"),
-    ("linewidth", "\\linewidth", "Ancho de línea"),
-    ("small", "\\small", "Tamaño"),
-    ("large", "\\large", "Tamaño"),
-    ("Large", "\\Large", "Tamaño"),
-    ("footnotesize", "\\footnotesize", "Tamaño"),
+    ("multicolumn", "\\multicolumn{${1:2}}{${2:c}}{${3}}$0", "Merged cell"),
+    ("textwidth", "\\textwidth", "Text width"),
+    ("linewidth", "\\linewidth", "Line width"),
+    ("small", "\\small", "Size"),
+    ("large", "\\large", "Size"),
+    ("Large", "\\Large", "Size"),
+    ("footnotesize", "\\footnotesize", "Size"),
     // Matemáticas
-    ("frac", "\\frac{${1}}{${2}}$0", "Fracción"),
-    ("sqrt", "\\sqrt{${1}}$0", "Raíz"),
-    ("sum", "\\sum_{${1:i=1}}^{${2:n}}$0", "Sumatorio"),
-    ("prod", "\\prod_{${1:i=1}}^{${2:n}}$0", "Productorio"),
+    ("frac", "\\frac{${1}}{${2}}$0", "Fraction"),
+    ("sqrt", "\\sqrt{${1}}$0", "Square root"),
+    ("sum", "\\sum_{${1:i=1}}^{${2:n}}$0", "Sum"),
+    ("prod", "\\prod_{${1:i=1}}^{${2:n}}$0", "Product"),
     ("int", "\\int_{${1:a}}^{${2:b}}$0", "Integral"),
-    ("lim", "\\lim_{${1:x \\to \\infty}}$0", "Límite"),
-    ("text", "\\text{${1}}$0", "Texto en fórmula"),
-    ("mathbb", "\\mathbb{${1:R}}$0", "Conjuntos (ℝ, ℕ…)"),
-    ("mathcal", "\\mathcal{${1}}$0", "Caligráfica"),
-    ("mathbf", "\\mathbf{${1}}$0", "Negrita matemática"),
-    ("mathrm", "\\mathrm{${1}}$0", "Romana"),
-    ("operatorname", "\\operatorname{${1}}$0", "Operador"),
-    ("left(", "\\left( ${1} \\right)$0", "Paréntesis ajustados"),
-    ("left[", "\\left[ ${1} \\right]$0", "Corchetes ajustados"),
-    ("hat", "\\hat{${1}}$0", "Acento circunflejo"),
-    ("bar", "\\bar{${1}}$0", "Barra"),
+    ("lim", "\\lim_{${1:x \\to \\infty}}$0", "Limit"),
+    ("text", "\\text{${1}}$0", "Text in math"),
+    ("mathbb", "\\mathbb{${1:R}}$0", "Number sets (ℝ, ℕ…)"),
+    ("mathcal", "\\mathcal{${1}}$0", "Calligraphic"),
+    ("mathbf", "\\mathbf{${1}}$0", "Bold math"),
+    ("mathrm", "\\mathrm{${1}}$0", "Roman"),
+    ("operatorname", "\\operatorname{${1}}$0", "Operator"),
+    ("left(", "\\left( ${1} \\right)$0", "Sized parentheses"),
+    ("left[", "\\left[ ${1} \\right]$0", "Sized brackets"),
+    ("hat", "\\hat{${1}}$0", "Hat"),
+    ("bar", "\\bar{${1}}$0", "Bar"),
     ("vec", "\\vec{${1}}$0", "Vector"),
     ("partial", "\\partial", "∂"),
     ("nabla", "\\nabla", "∇"),
@@ -195,7 +196,7 @@ const COMMANDS: &[(&str, &str, &str)] = &[
     ("exists", "\\exists", "∃"),
     ("ldots", "\\ldots", "…"),
     ("cdots", "\\cdots", "⋯"),
-    ("quad", "\\quad", "Espacio"),
+    ("quad", "\\quad", "Space"),
     ("alpha", "\\alpha", "α"),
     ("beta", "\\beta", "β"),
     ("gamma", "\\gamma", "γ"),
@@ -247,7 +248,7 @@ const ENVIRONMENTS: &[(&str, &str)] = &[
     ("lemma", "}\n\t${1}\n\\end{lemma}$0"),
     ("definition", "}\n\t${1}\n\\end{definition}$0"),
     ("proof", "}\n\t${1}\n\\end{proof}$0"),
-    ("frame", "}{${1:Título}}\n\t${2}\n\\end{frame}$0"),
+    ("frame", "}{${1:Title}}\n\t${2}\n\\end{frame}$0"),
     ("subfigure", "}{${1:0.45}\\linewidth}\n\t\\centering\n\t\\includegraphics[width=\\linewidth]{${2}}\n\t\\caption{${3}}\n\\end{subfigure}$0"),
 ];
 
@@ -430,11 +431,11 @@ fn proposals(ctx: &Context, data: Option<&SharedData>, context: &sourceview5::Co
     match ctx {
         Context::Command(_) => {
             for (name, snippet, detail) in COMMANDS {
-                out.push(LatexProposal::new(Kind::Command, &format!("\\{name}"), snippet, detail, true));
+                out.push(LatexProposal::new(Kind::Command, &format!("\\{name}"), snippet, tr(detail), true));
             }
             if let Some(d) = data {
                 for cmd in &d.borrow().index.commands {
-                    out.push(LatexProposal::new(Kind::Command, &format!("\\{cmd}"), &format!("\\{cmd}"), "Definido en el proyecto", false));
+                    out.push(LatexProposal::new(Kind::Command, &format!("\\{cmd}"), &format!("\\{cmd}"), tr("Defined in the project"), false));
                 }
             }
             // La etiqueta empieza por "\", pero se filtra por lo escrito tras ella.
@@ -446,12 +447,12 @@ fn proposals(ctx: &Context, data: Option<&SharedData>, context: &sourceview5::Co
         Context::Argument { command, .. } => match command.as_str() {
             "begin" => {
                 for (name, rest) in ENVIRONMENTS {
-                    out.push(LatexProposal::new(Kind::Environment, name, &format!("{name}{rest}"), "Entorno", true));
+                    out.push(LatexProposal::new(Kind::Environment, name, &format!("{name}{rest}"), tr("Environment"), true));
                 }
             }
             "end" => {
                 if let Some(env) = context.buffer().and_then(|b| open_environment(&b)) {
-                    out.push(LatexProposal::new(Kind::Environment, &env, &env, "Cerrar entorno abierto", false));
+                    out.push(LatexProposal::new(Kind::Environment, &env, &env, tr("Close the open environment"), false));
                 }
             }
             c if REF_COMMANDS.contains(&c) => {
@@ -464,7 +465,7 @@ fn proposals(ctx: &Context, data: Option<&SharedData>, context: &sourceview5::Co
                     for call in b.text(&s, &e, false).lines().flat_map(|l| crate::index::calls(l).into_iter().map(|c| (c.name.to_string(), c.arg.map(str::to_string))).collect::<Vec<_>>()) {
                         if let ("label", Some(name)) = (call.0.as_str(), call.1) {
                             if !labels.iter().any(|(n, _)| *n == name) {
-                                labels.push((name, "este archivo".into()));
+                                labels.push((name, tr("this file").into()));
                             }
                         }
                     }

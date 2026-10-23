@@ -3,9 +3,11 @@
 use adw::prelude::*;
 
 use crate::config::{self, ThemeMode};
+use crate::i18n::tr;
 
 /// Qué ha cambiado, para que la ventana lo aplique en caliente.
 pub enum Change {
+    Language,
     Theme,
     FontSize(u32),
     Wrap(bool),
@@ -19,36 +21,44 @@ pub fn show(parent: &impl IsA<gtk::Widget>, on_change: impl Fn(Change) + 'static
     let cfg = config::get();
     let on_change = std::rc::Rc::new(on_change);
 
+    // --- Idioma (los nombres van sin traducir para que siempre se encuentren) ---
+    let language = adw::ComboRow::builder()
+        .title("Language · Idioma")
+        .model(&gtk::StringList::new(&["English", "Español"]))
+        .selected(if cfg.spanish { 1 } else { 0 })
+        .build();
+
     // --- Apariencia ---
     let theme_names: Vec<&str> = ThemeMode::ALL.iter().map(|m| m.label()).collect();
     let theme = adw::ComboRow::builder()
-        .title("Tema")
-        .subtitle("«Omarchy» sigue el tema del sistema y cambia en cuanto lo cambias tú")
+        .title(tr("Theme"))
+        .subtitle(tr("“Omarchy” follows your system theme and changes as soon as you change it"))
         .model(&gtk::StringList::new(&theme_names))
         .selected(ThemeMode::ALL.iter().position(|m| *m == cfg.theme).unwrap_or(0) as u32)
         .build();
     let font = adw::SpinRow::builder()
-        .title("Tamaño de letra del editor")
+        .title(tr("Editor font size"))
         .adjustment(&gtk::Adjustment::new(cfg.font_size as f64, 7.0, 32.0, 1.0, 2.0, 0.0))
         .build();
     let pdf_dark = adw::SwitchRow::builder()
-        .title("PDF en modo oscuro")
-        .subtitle("Pinta las páginas con los colores del tema (solo en pantalla)")
+        .title(tr("Dark PDF"))
+        .subtitle(tr("Paints pages with the theme colors (on screen only)"))
         .active(cfg.pdf_dark)
         .build();
-    let appearance = adw::PreferencesGroup::builder().title("Apariencia").build();
+    let appearance = adw::PreferencesGroup::builder().title(tr("Appearance")).build();
+    appearance.add(&language);
     appearance.add(&theme);
     appearance.add(&font);
     appearance.add(&pdf_dark);
 
     // --- Editor ---
-    let wrap = adw::SwitchRow::builder().title("Ajustar líneas largas").active(cfg.wrap).build();
+    let wrap = adw::SwitchRow::builder().title(tr("Wrap long lines")).active(cfg.wrap).build();
     let autopairs = adw::SwitchRow::builder()
-        .title("Cerrar llaves automáticamente")
-        .subtitle("{ [ ( $ y \\end{…} al pulsar Intro tras \\begin{…}")
+        .title(tr("Auto-close brackets"))
+        .subtitle(tr("{ [ ( $ and \\end{…} when pressing Enter after \\begin{…}"))
         .active(cfg.autopairs)
         .build();
-    let vim = adw::SwitchRow::builder().title("Modo Vim").active(cfg.vim).build();
+    let vim = adw::SwitchRow::builder().title(tr("Vim mode")).active(cfg.vim).build();
     let editor = adw::PreferencesGroup::builder().title("Editor").build();
     editor.add(&wrap);
     editor.add(&autopairs);
@@ -56,16 +66,16 @@ pub fn show(parent: &impl IsA<gtk::Widget>, on_change: impl Fn(Change) + 'static
 
     // --- Compilación ---
     let autocompile = adw::SwitchRow::builder()
-        .title("Compilar automáticamente")
-        .subtitle("Si lo desactivas, se guarda igual pero solo compila con Ctrl+S o Ctrl+Intro")
+        .title(tr("Compile automatically"))
+        .subtitle(tr("When off, files are still saved but only compile with Ctrl+S or Ctrl+Enter"))
         .active(cfg.autocompile)
         .build();
     let delay = adw::SpinRow::builder()
-        .title("Espera tras dejar de escribir (ms)")
+        .title(tr("Delay after you stop typing (ms)"))
         .adjustment(&gtk::Adjustment::new(cfg.compile_delay_ms as f64, 200.0, 10_000.0, 100.0, 500.0, 0.0))
         .build();
     autocompile.bind_property("active", &delay, "sensitive").sync_create().build();
-    let build = adw::PreferencesGroup::builder().title("Compilación").build();
+    let build = adw::PreferencesGroup::builder().title(tr("Compilation")).build();
     build.add(&autocompile);
     build.add(&delay);
 
@@ -73,9 +83,15 @@ pub fn show(parent: &impl IsA<gtk::Widget>, on_change: impl Fn(Change) + 'static
     page.add(&appearance);
     page.add(&editor);
     page.add(&build);
-    let dialog = adw::PreferencesDialog::builder().title("Preferencias").build();
+    let dialog = adw::PreferencesDialog::builder().title(tr("Preferences")).build();
     dialog.add(&page);
 
+    let cb = on_change.clone();
+    language.connect_selected_notify(move |row| {
+        let spanish = row.selected() == 1;
+        config::update(|c| c.spanish = spanish);
+        cb(Change::Language);
+    });
     let cb = on_change.clone();
     theme.connect_selected_notify(move |row| {
         let mode = ThemeMode::ALL[row.selected() as usize % ThemeMode::ALL.len()];
@@ -131,44 +147,44 @@ pub fn show(parent: &impl IsA<gtk::Widget>, on_change: impl Fn(Change) + 'static
 pub fn shortcuts(parent: &impl IsA<gtk::Widget>) {
     let sections: &[(&str, &[(&str, &str)])] = &[
         (
-            "Proyecto",
+            tr("Project"),
             &[
-                ("Guardar y compilar", "<Control>s"),
-                ("Compilar ahora", "<Control>Return"),
-                ("Apertura rápida de archivos", "<Control>p"),
-                ("Nuevo archivo", "<Control>n"),
-                ("Abrir proyecto", "<Control>o"),
-                ("Mostrar archivos", "<Control><Shift>e"),
-                ("Mostrar esquema", "<Control><Shift>o"),
-                ("Mostrar u ocultar la barra lateral", "F9"),
-                ("Panel de problemas", "<Control>e"),
-                ("Preferencias", "<Control>comma"),
+                (tr("Save and compile"), "<Control>s"),
+                (tr("Compile now"), "<Control>Return"),
+                (tr("Quick open"), "<Control>p"),
+                (tr("New file"), "<Control>n"),
+                (tr("Open project"), "<Control>o"),
+                (tr("Show files"), "<Control><Shift>e"),
+                (tr("Show outline"), "<Control><Shift>o"),
+                (tr("Toggle sidebar"), "F9"),
+                (tr("Problems panel"), "<Control>e"),
+                (tr("Preferences"), "<Control>comma"),
             ],
         ),
         (
-            "Edición",
+            tr("Editing"),
             &[
-                ("Deshacer", "<Control>z"),
-                ("Rehacer", "<Control><Shift>z"),
-                ("Buscar", "<Control>f"),
-                ("Ir a la línea", "<Control>g"),
-                ("Comentar o descomentar", "<Control>slash"),
-                ("Negrita (\\textbf)", "<Control>b"),
-                ("Cursiva (\\textit)", "<Control>i"),
-                ("Duplicar línea", "<Control>d"),
-                ("Borrar línea", "<Control><Shift>k"),
-                ("Mover línea", "<Alt>Up <Alt>Down"),
-                ("Mostrar sugerencias", "<Control>space"),
-                ("Cerrar pestaña", "<Control>w"),
+                (tr("Undo"), "<Control>z"),
+                (tr("Redo"), "<Control><Shift>z"),
+                (tr("Find"), "<Control>f"),
+                (tr("Go to line"), "<Control>g"),
+                (tr("Comment or uncomment"), "<Control>slash"),
+                (tr("Bold (\\textbf)"), "<Control>b"),
+                (tr("Italic (\\textit)"), "<Control>i"),
+                (tr("Duplicate line"), "<Control>d"),
+                (tr("Delete line"), "<Control><Shift>k"),
+                (tr("Move line"), "<Alt>Up <Alt>Down"),
+                (tr("Show suggestions"), "<Control>space"),
+                (tr("Close tab"), "<Control>w"),
             ],
         ),
         (
             "PDF",
             &[
-                ("Ir del código al PDF", "<Control>j"),
-                ("Acercar", "<Control>plus"),
-                ("Alejar", "<Control>minus"),
-                ("Ajustar al ancho", "<Control>0"),
+                (tr("Jump from source to PDF"), "<Control>j"),
+                (tr("Zoom in"), "<Control>plus"),
+                (tr("Zoom out"), "<Control>minus"),
+                (tr("Fit width"), "<Control>0"),
             ],
         ),
     ];

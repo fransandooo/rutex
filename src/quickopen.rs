@@ -8,6 +8,7 @@ use adw::prelude::*;
 use gtk::{gdk, glib};
 
 use crate::index::Section;
+use crate::i18n::tr;
 
 const MAX_RESULTS: usize = 60;
 
@@ -47,13 +48,13 @@ pub fn score(query: &str, text: &str) -> Option<i32> {
 }
 
 pub fn show(parent: &impl IsA<gtk::Widget>, files: Vec<PathBuf>, sections: Vec<Section>, on_pick: impl Fn(Target) + 'static) {
-    let entry = gtk::SearchEntry::builder().placeholder_text("Buscar archivo…  (@ para secciones)").hexpand(true).build();
+    let entry = gtk::SearchEntry::builder().placeholder_text(tr("Search files…  (@ for sections)")).hexpand(true).build();
     let list = gtk::ListBox::builder().css_classes(["navigation-sidebar", "quick-open"]).build();
     let scroller = gtk::ScrolledWindow::builder().child(&list).min_content_height(360).hscrollbar_policy(gtk::PolicyType::Never).vexpand(true).build();
     let content = gtk::Box::builder().orientation(gtk::Orientation::Vertical).spacing(8).margin_top(12).margin_bottom(12).margin_start(12).margin_end(12).build();
     content.append(&entry);
     content.append(&scroller);
-    let dialog = adw::Dialog::builder().title("Abrir").content_width(560).child(&content).build();
+    let dialog = adw::Dialog::builder().title(tr("Open")).content_width(560).child(&content).build();
 
     let targets: Rc<std::cell::RefCell<Vec<Target>>> = Rc::default();
     let on_pick = Rc::new(on_pick);

@@ -9,6 +9,7 @@ use adw::prelude::*;
 use gtk::{gio, glib};
 
 use crate::templates::{self, TEMPLATES};
+use crate::i18n::{tr, trf};
 
 fn default_location() -> PathBuf {
     glib::user_special_dir(glib::UserDirectory::Documents).unwrap_or_else(glib::home_dir)
@@ -25,16 +26,16 @@ pub fn show(parent: &impl IsA<gtk::Widget>, on_create: impl Fn(PathBuf) + 'stati
     let location = Rc::new(RefCell::new(default_location()));
     let chosen = Rc::new(Cell::new(1usize)); // TFM por defecto
 
-    let name = adw::EntryRow::builder().title("Nombre de la carpeta").text("mi-proyecto").build();
-    let place = adw::ActionRow::builder().title("Ubicación").subtitle(tilde(&location.borrow())).build();
-    let change = gtk::Button::builder().label("Cambiar…").valign(gtk::Align::Center).css_classes(["flat"]).build();
+    let name = adw::EntryRow::builder().title(tr("Folder name")).text(tr("my-project")).build();
+    let place = adw::ActionRow::builder().title(tr("Location")).subtitle(tilde(&location.borrow())).build();
+    let change = gtk::Button::builder().label(tr("Change…")).valign(gtk::Align::Center).css_classes(["flat"]).build();
     place.add_suffix(&change);
     place.set_activatable_widget(Some(&change));
     let where_group = adw::PreferencesGroup::new();
     where_group.add(&name);
     where_group.add(&place);
 
-    let tpl_group = adw::PreferencesGroup::builder().title("Plantilla").build();
+    let tpl_group = adw::PreferencesGroup::builder().title(tr("Template")).build();
     let mut first_check: Option<gtk::CheckButton> = None;
     for (i, t) in TEMPLATES.iter().enumerate() {
         let check = gtk::CheckButton::builder().valign(gtk::Align::Center).active(i == chosen.get()).build();
@@ -49,14 +50,14 @@ pub fn show(parent: &impl IsA<gtk::Widget>, on_create: impl Fn(PathBuf) + 'stati
                 c.set(i);
             }
         });
-        let row = adw::ActionRow::builder().title(t.name).subtitle(t.description).activatable_widget(&check).build();
+        let row = adw::ActionRow::builder().title(tr(t.name)).subtitle(tr(t.description)).activatable_widget(&check).build();
         row.add_prefix(&check);
         row.add_suffix(&gtk::Image::from_icon_name(t.icon));
         tpl_group.add(&row);
     }
 
     let error = gtk::Label::builder().css_classes(["error"]).wrap(true).visible(false).build();
-    let create = gtk::Button::builder().label("Crear proyecto").halign(gtk::Align::Center).css_classes(["pill", "suggested-action"]).build();
+    let create = gtk::Button::builder().label(tr("Create project")).halign(gtk::Align::Center).css_classes(["pill", "suggested-action"]).build();
 
     let content = gtk::Box::builder().orientation(gtk::Orientation::Vertical).spacing(18).margin_top(12).margin_bottom(24).margin_start(18).margin_end(18).build();
     content.append(&where_group);
@@ -67,11 +68,11 @@ pub fn show(parent: &impl IsA<gtk::Widget>, on_create: impl Fn(PathBuf) + 'stati
     let toolbar = adw::ToolbarView::new();
     toolbar.add_top_bar(&adw::HeaderBar::new());
     toolbar.set_content(Some(&gtk::ScrolledWindow::builder().child(&content).propagate_natural_height(true).build()));
-    let dialog = adw::Dialog::builder().title("Nuevo proyecto").content_width(560).child(&toolbar).build();
+    let dialog = adw::Dialog::builder().title(tr("New project")).content_width(560).child(&toolbar).build();
 
     let (loc, sub, dlg) = (location.clone(), place.clone(), dialog.clone());
     change.connect_clicked(move |_| {
-        let fd = gtk::FileDialog::builder().title("Ubicación del proyecto").initial_folder(&gio::File::for_path(&*loc.borrow())).build();
+        let fd = gtk::FileDialog::builder().title(tr("Project location")).initial_folder(&gio::File::for_path(&*loc.borrow())).build();
         let (loc, sub) = (loc.clone(), sub.clone());
         let parent = dlg.root().and_downcast::<gtk::Window>();
         fd.select_folder(parent.as_ref(), gio::Cancellable::NONE, move |res| {
@@ -92,12 +93,12 @@ pub fn show(parent: &impl IsA<gtk::Widget>, on_create: impl Fn(PathBuf) + 'stati
             error.set_visible(true);
         };
         if folder.is_empty() || folder.contains('/') || folder == "." || folder == ".." {
-            fail("Escribe un nombre de carpeta válido (sin «/»).");
+            fail(tr("Type a valid folder name (without “/”)."));
             return;
         }
         let root = location.borrow().join(&folder);
         if root.exists() && fs::read_dir(&root).map(|mut d| d.next().is_some()).unwrap_or(true) {
-            fail("Esa carpeta ya existe y no está vacía. Elige otro nombre o usa «Abrir carpeta».");
+            fail(tr("That folder already exists and is not empty. Pick another name or use “Open folder”."));
             return;
         }
         let title = folder.replace(['-', '_'], " ");
@@ -107,7 +108,7 @@ pub fn show(parent: &impl IsA<gtk::Widget>, on_create: impl Fn(PathBuf) + 'stati
                 dlg.close();
                 on_create(root);
             }
-            Err(e) => fail(&format!("No se pudo crear el proyecto: {e}")),
+            Err(e) => fail(&trf("Could not create the project: {}", &[&e])),
         }
     };
     let do_create = Rc::new(do_create);

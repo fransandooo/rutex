@@ -168,7 +168,7 @@ impl Running {
 
         let (out, issues) = match result {
             Ok(r) => r,
-            Err(_) => (Err(std::io::Error::other("el hilo de compilación falló")), Vec::new()),
+            Err(_) => (Err(std::io::Error::other(crate::i18n::tr("the build thread failed"))), Vec::new()),
         };
         let (ok, output) = match out {
             Ok(o) => {

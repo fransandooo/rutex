@@ -5,6 +5,7 @@ mod demo;
 mod editor;
 mod filetree;
 mod hover;
+mod i18n;
 mod index;
 mod keys;
 mod logparse;
@@ -35,11 +36,12 @@ fn main() -> glib::ExitCode {
         .flags(gio::ApplicationFlags::HANDLES_OPEN)
         .build();
 
+    i18n::set_spanish(config::get().spanish);
     app.connect_startup(|app| {
         let provider = gtk::CssProvider::new();
         provider.load_from_string(CSS);
         gtk::style_context_add_provider_for_display(
-            &gtk::gdk::Display::default().expect("sin display"),
+            &gtk::gdk::Display::default().expect("no display"),
             &provider,
             gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
         );

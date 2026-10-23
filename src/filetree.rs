@@ -13,6 +13,7 @@ use gtk::{gdk, gio, glib};
 
 use crate::project;
 use crate::ui::{self, MenuEntry};
+use crate::i18n::tr;
 
 const SKIP_DIRS: &[&str] = &["node_modules", "target", "__pycache__", "_minted"];
 
@@ -105,7 +106,7 @@ impl FileTree {
             let item = obj.downcast_ref::<gtk::ListItem>().unwrap();
             let icon = gtk::Image::new();
             let label = gtk::Label::builder().xalign(0.0).hexpand(true).ellipsize(gtk::pango::EllipsizeMode::Middle).build();
-            let star = gtk::Image::builder().icon_name("starred-symbolic").tooltip_text("Archivo principal").css_classes(["main-star"]).build();
+            let star = gtk::Image::builder().icon_name("starred-symbolic").tooltip_text(tr("Main file")).css_classes(["main-star"]).build();
             let row = gtk::Box::builder().spacing(8).build();
             row.append(&icon);
             row.append(&label);
@@ -164,22 +165,22 @@ impl FileTree {
         let target = rel.to_string_lossy().to_string();
         let dir = if is_dir { target.clone() } else { rel.parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_default() };
         let mut entries = vec![
-            MenuEntry::item("document-new-symbolic", "Nuevo archivo…", "win.tree-new-file", &dir),
-            MenuEntry::item("folder-new-symbolic", "Nueva carpeta…", "win.tree-new-folder", &dir),
+            MenuEntry::item("document-new-symbolic", tr("New file…"), "win.tree-new-file", &dir),
+            MenuEntry::item("folder-new-symbolic", tr("New folder…"), "win.tree-new-folder", &dir),
         ];
         if !target.is_empty() {
             entries.push(MenuEntry::Separator);
-            entries.push(MenuEntry::item("document-edit-symbolic", "Renombrar…", "win.tree-rename", &target));
+            entries.push(MenuEntry::item("document-edit-symbolic", tr("Rename…"), "win.tree-rename", &target));
             if !is_dir && project::has_ext(rel, "tex") {
-                entries.push(MenuEntry::item("starred-symbolic", "Usar como archivo principal", "win.tree-set-main", &target));
+                entries.push(MenuEntry::item("starred-symbolic", tr("Use as main file"), "win.tree-set-main", &target));
             }
         }
         entries.push(MenuEntry::Separator);
-        entries.push(MenuEntry::item("edit-copy-symbolic", "Copiar ruta", "win.tree-copy-path", &target));
-        entries.push(MenuEntry::item("folder-open-symbolic", "Mostrar en el gestor de archivos", "win.tree-reveal", &target));
+        entries.push(MenuEntry::item("edit-copy-symbolic", tr("Copy path"), "win.tree-copy-path", &target));
+        entries.push(MenuEntry::item("folder-open-symbolic", tr("Show in file manager"), "win.tree-reveal", &target));
         if !target.is_empty() {
             entries.push(MenuEntry::Separator);
-            entries.push(MenuEntry::danger("user-trash-symbolic", "Mover a la papelera", "win.tree-trash", &target));
+            entries.push(MenuEntry::danger("user-trash-symbolic", tr("Move to trash"), "win.tree-trash", &target));
         }
         // El menú cuelga de la barra lateral entera (no de la fila) para que nunca se recorte.
         let point = parent.compute_point(&self.widget, &gtk::graphene::Point::new(x as f32, y as f32));

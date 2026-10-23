@@ -42,7 +42,7 @@ impl Project {
         let mut files = scan(&root);
         if !files.iter().any(|f| has_ext(f, "tex")) {
             if !create {
-                return Err(std::io::Error::other("La carpeta no contiene archivos .tex"));
+                return Err(std::io::Error::other(crate::i18n::tr("The folder has no .tex files")));
             }
             let title = root.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
             crate::templates::write(&crate::templates::TEMPLATES[0], &root, &title)?;
