@@ -14,6 +14,7 @@ mod prefs;
 mod project;
 mod quickopen;
 mod synctex;
+mod tabs;
 mod templates;
 mod theme;
 mod ui;

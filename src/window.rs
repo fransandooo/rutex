@@ -393,6 +393,7 @@ pub struct ProjectWindow {
     issues_btn: gtk::ToggleButton,
     engine_label: gtk::Label,
     words_label: gtk::Label,
+    title_label: gtk::Label,
     issues_revealer: gtk::Revealer,
     issues_list: gtk::ListBox,
     issues_stack: gtk::Stack,
@@ -419,7 +420,18 @@ impl ProjectWindow {
         let pdf = PdfView::new();
 
         // --- Barra superior ---
-        let title = adw::WindowTitle::new(&project.name(), &tilde(&project.root));
+        // «Centro de mando»: proyecto y archivo actual; al pulsarlo, apertura rápida.
+        let title_label = gtk::Label::builder().label(project.name()).ellipsize(gtk::pango::EllipsizeMode::Middle).hexpand(true).build();
+        let title_box = gtk::Box::builder().spacing(8).build();
+        title_box.append(&gtk::Image::from_icon_name("system-search-symbolic"));
+        title_box.append(&title_label);
+        title_box.append(&gtk::Label::builder().label("Ctrl P").css_classes(["kbd"]).build());
+        let title = gtk::Button::builder()
+            .child(&title_box)
+            .action_name("win.quick-open")
+            .tooltip_text(tilde(&project.root))
+            .css_classes(["command-center"])
+            .build();
         let header = adw::HeaderBar::new();
         header.set_title_widget(Some(&title));
 
@@ -526,7 +538,9 @@ impl ProjectWindow {
         let panel = gtk::Box::builder().orientation(gtk::Orientation::Vertical).height_request(200).css_classes(["issues-panel"]).build();
         panel.append(&panel_header);
         panel.append(&issues_stack);
-        let issues_revealer = gtk::Revealer::builder().child(&panel).transition_type(gtk::RevealerTransitionType::SlideUp).build();
+        // vexpand(false) explícito: si no, el revealer hereda el vexpand de su
+        // contenido incluso oculto y le roba medio alto al editor.
+        let issues_revealer = gtk::Revealer::builder().child(&panel).transition_type(gtk::RevealerTransitionType::SlideUp).vexpand(false).build();
 
         // --- Barra de estado ---
         let engine_label = gtk::Label::new(None);
@@ -603,6 +617,7 @@ impl ProjectWindow {
             issues_btn,
             engine_label,
             words_label,
+            title_label,
             issues_revealer,
             issues_list,
             issues_stack,
@@ -695,6 +710,11 @@ impl ProjectWindow {
         let weak = Rc::downgrade(self);
         self.editor.connect_switch(move || {
             if let Some(this) = weak.upgrade() {
+                let name = this.project.borrow().name();
+                match this.editor.current() {
+                    Some(rel) => this.title_label.set_label(&format!("{name}  ·  {}", rel.display())),
+                    None => this.title_label.set_label(&name),
+                }
                 if let Some(rel) = this.editor.current() {
                     this.tree.select(&rel);
                 }

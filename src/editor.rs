@@ -17,6 +17,7 @@ use crate::completion::{LatexProvider, SharedData};
 use crate::config;
 use crate::hover::IssueHover;
 use crate::keys;
+use crate::tabs::TabStrip;
 
 struct Doc {
     rel: PathBuf,
@@ -36,6 +37,7 @@ pub struct Editor {
     /// Línea de comandos del modo Vim (para la barra de estado).
     pub vim_label: gtk::Label,
     tab_view: adw::TabView,
+    _tab_strip: Rc<TabStrip>,
     stack: gtk::Stack,
     root: PathBuf,
     completion: LatexProvider,
@@ -61,7 +63,7 @@ impl Editor {
     pub fn new(root: PathBuf, data: SharedData) -> Rc<Editor> {
         let tab_view = adw::TabView::new();
         tab_view.set_vexpand(true);
-        let tab_bar = adw::TabBar::builder().view(&tab_view).autohide(false).expand_tabs(false).css_classes(["rutex-tabs"]).build();
+        let tab_strip = TabStrip::new(&tab_view);
 
         let empty = adw::StatusPage::builder()
             .icon_name("text-x-generic-symbolic")
@@ -78,7 +80,7 @@ impl Editor {
         search_bar.connect_entry(&search_entry);
 
         let widget = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        widget.append(&tab_bar);
+        widget.append(&tab_strip.widget);
         widget.append(&search_bar);
         widget.append(&stack);
 
@@ -89,6 +91,7 @@ impl Editor {
             position_label: gtk::Label::new(None),
             vim_label: gtk::Label::builder().css_classes(["monospace"]).visible(false).build(),
             tab_view,
+            _tab_strip: tab_strip,
             stack,
             root,
             completion: LatexProvider::new(data),
@@ -257,7 +260,7 @@ impl Editor {
             .smart_home_end(sourceview5::SmartHomeEndType::Before)
             .wrap_mode(if cfg.wrap { gtk::WrapMode::WordChar } else { gtk::WrapMode::None })
             .top_margin(10)
-            .bottom_margin(24)
+            .bottom_margin(160)
             .left_margin(8)
             .right_margin(16)
             .css_classes(["rutex-editor"])
@@ -287,7 +290,6 @@ impl Editor {
             completion.set_show_icons(true);
         }
         let scroller = gtk::ScrolledWindow::builder().child(&view).vexpand(true).build();
-
         let page = self.tab_view.append(&scroller);
         let name = rel.file_name().unwrap_or_default().to_string_lossy().into_owned();
         page.set_title(&name);
