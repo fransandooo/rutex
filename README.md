@@ -30,7 +30,12 @@ The interface is in English by default, and Spanish is available in Preferences.
 - **Quick open** (`Ctrl+P`) with fuzzy search over files, or sections with `@`.
 - **Errors where they happen**: lines with errors and warnings are marked in the editor.
   Hover over one to read the message, or click its margin icon to open the problems list.
-- **Word count** of the whole document in the status bar.
+- **Spell checking** as you type, in the document's language (from `babel`/`polyglossia`), that
+  skips commands, math, labels, citation keys and file names.
+- **Hover a `\\ref` or `\\cite`** to see what it points to (the caption, section title or entry),
+  and **Ctrl+click** it to go to the `\\label` or the `.bib` entry.
+- **Find and replace in the whole project** (`Ctrl+Shift+F`).
+- **Words per chapter** and an optional word goal, from the status bar.
 - **Optional Vim mode**.
 
 **Looks**
@@ -49,6 +54,19 @@ The interface is in English by default, and Spanish is available in Preferences.
 - **Clickable links**: the table of contents, `\ref`, `\cite` and URLs work like in any PDF
   viewer, with a back button to return.
 - **Fullscreen reading**: `F11` or the button in the viewer shows only the PDF; `Esc` goes back.
+
+**Safety net**
+- **Local version history** (`Ctrl+Shift+H`): automatic versions while you work, named versions
+  (`Ctrl+Shift+S`), a readable diff against your current files and one-click restore. It is
+  a private git repository in `~/.local/share/rutex/history/`; nothing is written into your
+  project and nothing leaves your machine.
+- **Check before submitting** (`Ctrl+Shift+R`): undefined references and citations, labels
+  never referenced, uncited bibliography entries, duplicate labels, text sticking into the
+  margin (worst first) and to-do notes, each one clickable.
+- **Missing packages**: when a build fails because a `.sty` is missing, rutex tells you which
+  package provides it (from TeX Live's own database, offline) and copies the `pacman` command.
+- **No compile timeout**: Overleaf's free plan stops compiling after 10 seconds; a thesis with
+  plots and a bibliography easily needs more.
 
 **Projects**
 - **A showcase demo**: "Try the demo" on the welcome screen opens a 16-page project with TikZ,
@@ -144,7 +162,10 @@ Press `Ctrl+?` inside the app to see them all.
 | `Ctrl+J` / `Ctrl+click` or double-click on PDF | Jump source → PDF / PDF → source |
 | Click on a PDF link | Follow it (contents, references, citations, URLs); the back button returns |
 | `Ctrl+Z` / `Ctrl+Y` / `Ctrl+Shift+Z` | Undo / redo |
-| `Ctrl+F` / `Ctrl+G` | Find / go to line |
+| `Ctrl+F` / `Ctrl+Shift+F` / `Ctrl+G` | Find / find in project / go to line |
+| `Ctrl+Shift+H` / `Ctrl+Shift+S` | Version history / save a named version |
+| `Ctrl+Shift+R` | Check before submitting |
+| `Ctrl+click` on a `\\ref` or `\\cite` key | Go to its `\\label` or `.bib` entry |
 | `Ctrl+/` | Comment or uncomment lines |
 | `Ctrl+B` / `Ctrl+I` | `\textbf{}` / `\textit{}` |
 | `Ctrl+D` / `Ctrl+Shift+K` / `Alt+↑↓` | Duplicate / delete / move lines |
