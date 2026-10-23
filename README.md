@@ -44,8 +44,10 @@ The interface is in English by default, and Spanish is available in Preferences.
 **PDF**
 - **Built-in viewer** that renders only the visible pages, on a separate thread. It doesn't
   flicker and keeps your scroll position when it reloads.
-- **SyncTeX**: double-click the PDF to jump to the source line, and press `Ctrl+J` to jump from
-  the source to the PDF.
+- **SyncTeX**: double-click (or `Ctrl+click`) the PDF to jump to the source line, and press `Ctrl+J`
+  to jump from the source to the PDF.
+- **Clickable links**: the table of contents, `\ref`, `\cite` and URLs work like in any PDF
+  viewer, with a back button to return.
 - **Fullscreen reading**: `F11` or the button in the viewer shows only the PDF; `Esc` goes back.
 
 **Projects**
@@ -139,7 +141,8 @@ Press `Ctrl+?` inside the app to see them all.
 |---|---|
 | `Ctrl+S` / `Ctrl+Enter` | Save and compile now |
 | `Ctrl+P` | Quick open (type `@` for sections) |
-| `Ctrl+J` / double-click on PDF | Jump source → PDF / PDF → source |
+| `Ctrl+J` / `Ctrl+click` or double-click on PDF | Jump source → PDF / PDF → source |
+| Click on a PDF link | Follow it (contents, references, citations, URLs); the back button returns |
 | `Ctrl+Z` / `Ctrl+Y` / `Ctrl+Shift+Z` | Undo / redo |
 | `Ctrl+F` / `Ctrl+G` | Find / go to line |
 | `Ctrl+/` | Comment or uncomment lines |
