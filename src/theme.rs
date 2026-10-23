@@ -236,6 +236,15 @@ pub fn init() {
     let manager = sourceview5::StyleSchemeManager::default();
     manager.prepend_search_path(&dir.to_string_lossy());
 
+    // LaTeX with keys/labels/paths excluded from spell checking (see rutex-latex.lang).
+    let langs = glib::user_cache_dir().join("rutex").join("language-specs");
+    let _ = fs::create_dir_all(&langs);
+    let _ = fs::write(langs.join("rutex-latex.lang"), include_str!("rutex-latex.lang"));
+    let lm = sourceview5::LanguageManager::default();
+    let mut paths: Vec<String> = lm.search_path().iter().map(|p| p.to_string()).collect();
+    paths.insert(0, langs.to_string_lossy().into_owned());
+    lm.set_search_path(&paths.iter().map(String::as_str).collect::<Vec<_>>());
+
     STATE.with(|s| {
         *s.borrow_mut() = Some(State { css, font_css, palette: None, monitors: Vec::new(), pending: None, listeners: Vec::new() })
     });

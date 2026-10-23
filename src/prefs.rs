@@ -8,6 +8,7 @@ use crate::i18n::tr;
 /// Qué ha cambiado, para que la ventana lo aplique en caliente.
 pub enum Change {
     Language,
+    Spelling,
     Theme,
     FontSize(u32),
     Wrap(bool),
@@ -58,10 +59,25 @@ pub fn show(parent: &impl IsA<gtk::Widget>, on_change: impl Fn(Change) + 'static
         .subtitle(tr("{ [ ( $ and \\end{…} when pressing Enter after \\begin{…}"))
         .active(cfg.autopairs)
         .build();
+    let spell = adw::SwitchRow::builder()
+        .title(tr("Check spelling"))
+        .subtitle(tr("Right-click a word for suggestions"))
+        .active(cfg.spellcheck)
+        .build();
+    let spell_names = [tr("Same as the document (babel)"), "English (US)", "English (UK)", "Español"];
+    let spell_codes = ["auto", "en_US", "en_GB", "es_ES"];
+    let spell_lang = adw::ComboRow::builder()
+        .title(tr("Spelling language"))
+        .model(&gtk::StringList::new(&spell_names))
+        .selected(spell_codes.iter().position(|c| *c == cfg.spell_lang).unwrap_or(0) as u32)
+        .build();
+    spell.bind_property("active", &spell_lang, "sensitive").sync_create().build();
     let vim = adw::SwitchRow::builder().title(tr("Vim mode")).active(cfg.vim).build();
     let editor = adw::PreferencesGroup::builder().title("Editor").build();
     editor.add(&wrap);
     editor.add(&autopairs);
+    editor.add(&spell);
+    editor.add(&spell_lang);
     editor.add(&vim);
 
     // --- Compilación ---
@@ -121,6 +137,18 @@ pub fn show(parent: &impl IsA<gtk::Widget>, on_change: impl Fn(Change) + 'static
         let on = row.is_active();
         config::update(|c| c.autopairs = on);
         cb(Change::Autopairs(on));
+    });
+    let cb = on_change.clone();
+    spell.connect_active_notify(move |row| {
+        let on = row.is_active();
+        config::update(|c| c.spellcheck = on);
+        cb(Change::Spelling);
+    });
+    let cb = on_change.clone();
+    spell_lang.connect_selected_notify(move |row| {
+        let code = spell_codes[row.selected() as usize % spell_codes.len()];
+        config::update(|c| c.spell_lang = code.to_string());
+        cb(Change::Spelling);
     });
     let cb = on_change.clone();
     vim.connect_active_notify(move |row| {

@@ -14,6 +14,7 @@ mod pdf;
 mod prefs;
 mod project;
 mod quickopen;
+mod spell;
 mod synctex;
 mod tabs;
 mod templates;

@@ -169,6 +169,10 @@ fn apply_change(app: &adw::Application, change: Change) {
             pw.pdf.refresh_colors();
         }),
         Change::Autocompile => {}
+        Change::Spelling => for_each_project(|pw| {
+            pw.editor.set_spellcheck(config::get().spellcheck);
+            pw.update_spell_language();
+        }),
     }
 }
 
@@ -420,6 +424,7 @@ pub struct ProjectWindow {
     issues_btn: gtk::ToggleButton,
     engine_label: gtk::Label,
     words_label: gtk::Label,
+    spell_label: gtk::Label,
     title_label: gtk::Label,
     issues_revealer: gtk::Revealer,
     issues_list: gtk::ListBox,
@@ -572,10 +577,12 @@ impl ProjectWindow {
         // --- Barra de estado ---
         let engine_label = gtk::Label::new(None);
         let words_label = gtk::Label::new(None);
+        let spell_label = gtk::Label::builder().css_classes(["spell-lang"]).build();
         let statusbar = gtk::Box::builder().spacing(16).css_classes(["statusbar"]).build();
         statusbar.append(&editor.position_label);
         statusbar.append(&editor.vim_label);
         statusbar.append(&gtk::Box::builder().hexpand(true).build());
+        statusbar.append(&spell_label);
         statusbar.append(&words_label);
         statusbar.append(&engine_label);
 
@@ -592,16 +599,21 @@ impl ProjectWindow {
         let ratio = Rc::new(Cell::new(0.52));
         let adjusting = Rc::new(Cell::new(false));
         let (r, a) = (ratio.clone(), adjusting.clone());
+        // The ratio is over the whole width (max_position excludes the PDF's minimum).
+        let total = |paned: &gtk::Paned| {
+            let pdf_min = paned.end_child().map_or(0, |c| c.measure(gtk::Orientation::Horizontal, -1).0);
+            (paned.max_position() + pdf_min) as f64
+        };
         main.connect_max_position_notify(move |paned| {
-            if paned.max_position() > 400 {
+            if paned.max_position() > 300 {
                 a.set(true);
-                paned.set_position((paned.max_position() as f64 * r.get()) as i32);
+                paned.set_position((total(paned) * r.get()) as i32);
                 a.set(false);
             }
         });
         main.connect_position_notify(move |paned| {
-            if !adjusting.get() && paned.max_position() > 400 {
-                ratio.set((paned.position() as f64 / paned.max_position() as f64).clamp(0.2, 0.8));
+            if !adjusting.get() && paned.max_position() > 300 {
+                ratio.set((paned.position() as f64 / total(paned)).clamp(0.2, 0.8));
             }
         });
 
@@ -644,6 +656,7 @@ impl ProjectWindow {
             issues_btn,
             engine_label,
             words_label,
+            spell_label,
             title_label,
             issues_revealer,
             issues_list,
@@ -935,7 +948,28 @@ impl ProjectWindow {
     }
 
     /// Recalcula esquema, etiquetas y bibliografía en un hilo aparte.
+    /// Dictionary from the preferences or the document's babel language.
+    fn update_spell_language(&self) {
+        let cfg = config::get();
+        let p = self.project.borrow();
+        let main_src = fs::read_to_string(p.root.join(&p.main)).unwrap_or_default();
+        let wanted = crate::spell::resolve(&cfg.spell_lang, &main_src);
+        let used = self.editor.set_spell_language(&wanted);
+        self.spell_label.set_visible(cfg.spellcheck);
+        match used {
+            Some(code) => {
+                self.spell_label.set_label(&code);
+                self.spell_label.set_tooltip_text(Some(tr("Spelling language")));
+            }
+            None => {
+                self.spell_label.set_label("—");
+                self.spell_label.set_tooltip_text(Some(&trf("No dictionary installed for {} (install hunspell-{})", &[&wanted, &wanted.split('_').next().unwrap_or("")])));
+            }
+        }
+    }
+
     fn refresh_index(self: &Rc<Self>) {
+        self.update_spell_language();
         let generation = self.index_generation.get() + 1;
         self.index_generation.set(generation);
         let p = self.project.borrow().clone();

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- LaTeX for rutex: the built-in LaTeX language plus a rule that keeps
+     keys, labels, file names and package/environment names out of the spell checker. -->
+<language id="rutex-latex" name="LaTeX (rutex)" version="2.0" hidden="true">
+  <metadata>
+    <property name="line-comment-start">%</property>
+  </metadata>
+  <definitions>
+    <context id="key-argument" class="no-spell-check">
+      <match>(\\(?:[a-zA-Z]*cite[a-zA-Z]*|[a-zA-Z]*ref|label|usepackage|RequirePackage|input|include|includeonly|includegraphics|includepdf|subfile|bibliography|bibliographystyle|addbibresource|documentclass|usetheme|usetikzlibrary|usepgfplotslibrary|graphicspath|begin|end|url|href|newcommand|renewcommand|newenvironment|DeclareMathOperator|lstinputlisting|hypersetup|setmainlanguage)\*?)((?:\[[^\]]*\])*)(\{[^{}]*\})</match>
+      <include>
+        <context sub-pattern="1" style-ref="latex:command"/>
+        <context sub-pattern="3" style-ref="latex:included-file"/>
+      </include>
+    </context>
+    <context id="rutex-latex">
+      <include>
+        <context ref="key-argument"/>
+        <context ref="latex:latex"/>
+      </include>
+    </context>
+  </definitions>
+</language>

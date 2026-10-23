@@ -27,6 +27,7 @@ struct Doc {
     page: adw::TabPage,
     mtime: Option<SystemTime>,
     vim: Option<(gtk::EventControllerKey, sourceview5::VimIMContext)>,
+    spell: Option<libspelling::TextBufferAdapter>,
 }
 
 type Callback = RefCell<Option<Box<dyn Fn()>>>;
@@ -43,6 +44,7 @@ pub struct Editor {
     root: PathBuf,
     completion: LatexProvider,
     key_options: Rc<keys::Options>,
+    checker: libspelling::Checker,
     /// Problemas de la última compilación por archivo: (línea, es_error, mensaje).
     issues: RefCell<HashMap<PathBuf, Vec<(u32, bool, String)>>>,
     error_attrs: sourceview5::MarkAttributes,
@@ -76,7 +78,7 @@ impl Editor {
         stack.add_named(&tab_view, Some("tabs"));
         stack.add_named(&empty, Some("empty"));
 
-        let search_entry = gtk::SearchEntry::builder().placeholder_text(tr("Find in file…")).width_chars(32).build();
+        let search_entry = gtk::SearchEntry::builder().placeholder_text(tr("Find in file…")).width_chars(12).hexpand(true).build();
         let search_bar = gtk::SearchBar::builder().child(&search_entry).show_close_button(true).build();
         search_bar.connect_entry(&search_entry);
 
@@ -101,6 +103,7 @@ impl Editor {
             on_issue_click: RefCell::default(),
             error_attrs: sourceview5::MarkAttributes::builder().icon_name("dialog-error-symbolic").build(),
             warning_attrs: sourceview5::MarkAttributes::builder().icon_name("dialog-warning-symbolic").build(),
+            checker: libspelling::Checker::default(),
             key_options: Rc::new(keys::Options { autopairs: Cell::new(config::get().autopairs), vim: Cell::new(config::get().vim) }),
             docs: RefCell::default(),
             on_change: RefCell::default(),
@@ -231,7 +234,7 @@ impl Editor {
         let lang = if crate::project::has_ext(rel, "bib") {
             Some("bibtex")
         } else if is_tex_like {
-            Some("latex")
+            Some("rutex-latex")
         } else {
             None
         };
@@ -311,7 +314,16 @@ impl Editor {
             }
         });
 
-        let mut doc = Doc { rel: rel.to_path_buf(), buffer, view, page: page.clone(), mtime: mtime(&abs), vim: None };
+        // Spell checking for prose files (not .bib). The LaTeX highlighting marks
+        // commands and math as no-spell-check, so only real text is checked.
+        let spell = (lang == Some("rutex-latex") || lang.is_none()).then(|| {
+            let adapter = libspelling::TextBufferAdapter::new(&buffer, &self.checker);
+            view.set_extra_menu(Some(&adapter.menu_model()));
+            view.insert_action_group("spelling", Some(&adapter));
+            adapter.set_enabled(cfg.spellcheck);
+            adapter
+        });
+        let mut doc = Doc { rel: rel.to_path_buf(), buffer, view, page: page.clone(), mtime: mtime(&abs), vim: None, spell };
         self.apply_marks(&doc);
         if cfg.vim {
             self.attach_vim(&mut doc);
@@ -485,6 +497,29 @@ impl Editor {
         for doc in self.docs.borrow().iter() {
             doc.view.set_wrap_mode(if wrap { gtk::WrapMode::WordChar } else { gtk::WrapMode::None });
         }
+    }
+
+    pub fn set_spellcheck(&self, enabled: bool) {
+        for doc in self.docs.borrow().iter() {
+            if let Some(a) = &doc.spell {
+                a.set_enabled(enabled);
+            }
+        }
+    }
+
+    /// Changes the dictionary (falls back to the closest installed one).
+    /// Returns the code actually used, or None if there is no dictionary.
+    pub fn set_spell_language(&self, wanted: &str) -> Option<String> {
+        let code = crate::spell::installed(&self.checker, wanted)?;
+        if self.checker.language().as_deref() != Some(code.as_str()) {
+            self.checker.set_language(&code);
+            for doc in self.docs.borrow().iter() {
+                if let Some(a) = &doc.spell {
+                    a.invalidate_all();
+                }
+            }
+        }
+        Some(code)
     }
 
     pub fn set_autopairs(&self, enabled: bool) {

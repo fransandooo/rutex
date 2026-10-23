@@ -53,6 +53,9 @@ pub struct Config {
     pub autocompile: bool,
     pub compile_delay_ms: u32,
     pub pdf_dark: bool,
+    pub spellcheck: bool,
+    /// "auto" (from the document) or a dictionary code such as "es_ES".
+    pub spell_lang: String,
     pub recent: Vec<PathBuf>,
     /// Archivo principal elegido a mano: (raíz, relativo).
     pub mains: Vec<(PathBuf, PathBuf)>,
@@ -70,6 +73,8 @@ impl Default for Config {
             autocompile: true,
             compile_delay_ms: 800,
             pdf_dark: false,
+            spellcheck: true,
+            spell_lang: "auto".to_string(),
             recent: Vec::new(),
             mains: Vec::new(),
         }
@@ -97,6 +102,8 @@ impl Config {
                 "autocompile" => cfg.autocompile = flag,
                 "compile_delay_ms" => cfg.compile_delay_ms = v.trim().parse().unwrap_or(cfg.compile_delay_ms).clamp(200, 10_000),
                 "pdf_dark" => cfg.pdf_dark = flag,
+                "spellcheck" => cfg.spellcheck = flag,
+                "spell_lang" => cfg.spell_lang = v.trim().to_string(),
                 "recent" => cfg.recent.push(v.into()),
                 "main" => {
                     if let Some((root, rel)) = v.split_once('\t') {
@@ -121,6 +128,8 @@ impl Config {
         out.push_str(&format!("autocompile={}\n", self.autocompile));
         out.push_str(&format!("compile_delay_ms={}\n", self.compile_delay_ms));
         out.push_str(&format!("pdf_dark={}\n", self.pdf_dark));
+        out.push_str(&format!("spellcheck={}\n", self.spellcheck));
+        out.push_str(&format!("spell_lang={}\n", self.spell_lang));
         for r in &self.recent {
             out.push_str(&format!("recent={}\n", r.display()));
         }
