@@ -1894,8 +1894,7 @@ impl ProjectWindow {
         self.issues_stack.set_visible_child_name("issues");
     }
 
-    /// "?" next to a problem: what it means, how to fix it, and (if turned on
-    /// in Preferences) Claude's explanation of this particular case.
+    /// "?" next to a problem: what it means and how to fix it.
     fn issue_help_button(&self, issue: &ShownIssue) -> gtk::MenuButton {
         let content = gtk::Box::builder().orientation(gtk::Orientation::Vertical).spacing(10).width_request(380).css_classes(["issue-help"]).build();
         let label = |text: &str, classes: &[&str]| gtk::Label::builder().label(text).xalign(0.0).wrap(true).max_width_chars(56).selectable(true).css_classes(classes.to_vec()).build();
@@ -1906,49 +1905,6 @@ impl ProjectWindow {
                 content.append(&label(&trf("How to fix: {}", &[&fix]), &["bubble-fix"]));
             }
             None => content.append(&label(tr("rutex has no built-in explanation for this message."), &["dim-label"])),
-        }
-        let cfg = config::get();
-        if !cfg.ai_help {
-            content.append(&label(tr("Tip: you can turn on explanations by Claude in Preferences → AI help."), &["dim-label", "caption"]));
-        } else if crate::ai::api_key().is_none() {
-            content.append(&label(tr("Add your Anthropic API key in Preferences → AI help to ask Claude."), &["dim-label", "caption"]));
-        } else {
-            let ask = gtk::Button::builder().label(tr("Ask Claude")).halign(gtk::Align::Start).css_classes(["suggested-action", "pill"]).build();
-            let answer = label("", &["ai-answer"]);
-            answer.set_visible(false);
-            content.append(&ask);
-            content.append(&answer);
-            let p = self.project.borrow().clone();
-            let (message, file, line) = (issue.message.clone(), issue.file.clone(), issue.line.unwrap_or(1));
-            ask.connect_clicked(move |btn| {
-                let Some(key) = crate::ai::api_key() else { return };
-                btn.set_sensitive(false);
-                btn.set_label(tr("Asking Claude…"));
-                let (btn, answer, p, message, file) = (btn.clone(), answer.clone(), p.clone(), message.clone(), file.clone());
-                glib::spawn_future_local(async move {
-                    let spanish = crate::i18n::is_spanish();
-                    let result = gio::spawn_blocking(move || {
-                        let name = file.as_ref().map(|f| f.display().to_string()).unwrap_or_default();
-                        let src = file.as_ref().and_then(|f| fs::read_to_string(p.root.join(f)).ok()).unwrap_or_default();
-                        let excerpt = crate::ai::excerpt(&src, line, 12);
-                        crate::ai::explain(&key, &message, &name, line, &excerpt, spanish, &p.build_dir)
-                    })
-                    .await
-                    .unwrap_or_else(|_| Err("thread".into()));
-                    answer.set_visible(true);
-                    match result {
-                        Ok(text) => {
-                            answer.set_label(&text);
-                            btn.set_visible(false);
-                        }
-                        Err(e) => {
-                            answer.set_label(&e);
-                            btn.set_sensitive(true);
-                            btn.set_label(tr("Ask Claude"));
-                        }
-                    }
-                });
-            });
         }
         let scroller = gtk::ScrolledWindow::builder().child(&content).propagate_natural_height(true).max_content_height(460).hscrollbar_policy(gtk::PolicyType::Never).build();
         gtk::MenuButton::builder()

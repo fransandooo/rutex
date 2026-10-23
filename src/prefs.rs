@@ -95,30 +95,10 @@ pub fn show(parent: &impl IsA<gtk::Widget>, on_change: impl Fn(Change) + 'static
     build.add(&autocompile);
     build.add(&delay);
 
-    // Optional AI explanations: off by default, the user's own key.
-    let ai_switch = adw::SwitchRow::builder()
-        .title(tr("Explain errors with Claude"))
-        .subtitle(tr("Adds an “Ask Claude” button to each problem. Only when you press it, the error and the lines around it are sent to Anthropic."))
-        .active(cfg.ai_help)
-        .build();
-    let ai_key = adw::PasswordEntryRow::builder().title(tr("Anthropic API key")).show_apply_button(true).build();
-    ai_key.set_text(&crate::ai::saved_key());
-    let ai = adw::PreferencesGroup::builder()
-        .title(tr("AI help (optional)"))
-        .description(tr("Uses your own API key from console.anthropic.com; each answer costs a fraction of a cent. The key is stored only on this computer."))
-        .build();
-    ai.add(&ai_switch);
-    if crate::ai::key_from_env() {
-        ai.add(&adw::ActionRow::builder().title(tr("Using ANTHROPIC_API_KEY from the environment")).css_classes(["dim-label"]).build());
-    } else {
-        ai.add(&ai_key);
-    }
-
     let page = adw::PreferencesPage::new();
     page.add(&appearance);
     page.add(&editor);
     page.add(&build);
-    page.add(&ai);
     let dialog = adw::PreferencesDialog::builder().title(tr("Preferences")).build();
     dialog.add(&page);
 
@@ -187,20 +167,6 @@ pub fn show(parent: &impl IsA<gtk::Widget>, on_change: impl Fn(Change) + 'static
         let ms = row.value() as u32;
         config::update(|c| c.compile_delay_ms = ms);
         cb(Change::Autocompile);
-    });
-
-    ai_switch.connect_active_notify(|row| {
-        let on = row.is_active();
-        config::update(|c| c.ai_help = on);
-    });
-    let toast_target = dialog.clone();
-    ai_key.connect_apply(move |row| {
-        let msg = match crate::ai::save_key(&row.text()) {
-            Ok(()) if row.text().trim().is_empty() => tr("API key removed"),
-            Ok(()) => tr("API key saved"),
-            Err(_) => tr("Could not save the API key"),
-        };
-        toast_target.add_toast(adw::Toast::new(msg));
     });
 
     dialog.present(Some(parent));

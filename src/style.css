@@ -445,8 +445,3 @@ button.symbol {
 .issue-help {
   padding: 14px;
 }
-.issue-help .ai-answer {
-  padding: 10px 12px;
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--window-fg-color) 6%, transparent);
-}

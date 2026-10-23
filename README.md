@@ -44,9 +44,8 @@ The interface is in English by default, and Spanish is available in Preferences.
 - **Folding**: an arrow in the margin folds a chapter, section or environment (`Alt+-` / `Alt++`,
   `Ctrl+Alt+-` folds every section). Folded text is only hidden; going to a line inside it opens it.
 - **Errors explained in plain words**: hovering an error shows what it means and how to fix it,
-  for the ~40 most common LaTeX errors and warnings, offline. Optionally, with your own Anthropic
-  API key (Preferences → AI help), an "Ask Claude" button in the problems list explains any error
-  using the lines around it. Off by default; nothing is sent unless you press the button.
+  for the ~40 most common LaTeX errors and warnings, offline; the same help is behind the ? next
+  to each problem in the list.
 - **Work with others through Git** (GitHub, GitLab, Overleaf's Git access…): in a project that is
   a Git repository with a remote, a **Sync** button commits your changes, brings in everyone
   else's and sends yours. If two people changed the same lines, rutex says so in plain words and

@@ -14,7 +14,6 @@ gtk = { version = "0.11.5", package = "gtk4", features = ["v4_14"] }
 libc = "0.2.191"
 libspelling = "0.5.0"
 poppler = { version = "0.26.0", package = "poppler-rs", features = ["v0_82"] }
-serde_json = "1.0.154"
 similar = "3.2.0"
 sourceview5 = { version = "0.11.2", features = ["v5_12"] }
 

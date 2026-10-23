@@ -1,6 +1,6 @@
 //! Plain-language explanations of LaTeX's most common errors and warnings,
 //! with how to fix them. Offline: shown in the error bubble and the problems
-//! list. An optional AI explanation (ai.rs) covers everything else.
+//! list.
 
 use crate::i18n::tr;
 
