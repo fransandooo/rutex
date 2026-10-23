@@ -124,6 +124,38 @@ pub fn is_text(abs: &Path) -> bool {
     }
 }
 
+const IMAGES: &[&str] = &["png", "jpg", "jpeg", "pdf", "eps", "svg", "gif", "webp"];
+
+/// Imágenes del proyecto (para `\includegraphics`), relativas a la raíz.
+pub fn images(root: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let mut stack = vec![(root.to_path_buf(), 0usize)];
+    while let Some((dir, depth)) = stack.pop() {
+        let Ok(entries) = fs::read_dir(&dir) else { continue };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            if name.to_string_lossy().starts_with('.') {
+                continue;
+            }
+            let path = entry.path();
+            if entry.file_type().is_ok_and(|t| t.is_dir()) {
+                if depth < MAX_DEPTH && !SKIP_DIRS.contains(&name.to_string_lossy().as_ref()) {
+                    stack.push((path, depth + 1));
+                }
+            } else if IMAGES.iter().any(|e| has_ext(&path, e))
+                && let Ok(rel) = path.strip_prefix(root)
+            {
+                out.push(rel.to_path_buf());
+            }
+        }
+        if out.len() > MAX_FILES {
+            break;
+        }
+    }
+    out.sort();
+    out
+}
+
 pub fn has_ext(p: &Path, ext: &str) -> bool {
     p.extension().is_some_and(|e| e.eq_ignore_ascii_case(ext))
 }

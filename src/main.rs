@@ -1,4 +1,5 @@
 mod compiler;
+mod completion;
 mod config;
 mod editor;
 mod filetree;

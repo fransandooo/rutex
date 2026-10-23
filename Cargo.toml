@@ -12,7 +12,7 @@ glib-unix = "0.22.8"
 gtk = { version = "0.11.5", package = "gtk4", features = ["v4_14"] }
 libc = "0.2.191"
 poppler = { version = "0.26.0", package = "poppler-rs", features = ["v0_82"] }
-sourceview5 = { version = "0.11.2", features = ["v5_4"] }
+sourceview5 = { version = "0.11.2", features = ["v5_12"] }
 
 [profile.release]
 opt-level = 3

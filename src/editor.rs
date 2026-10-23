@@ -12,6 +12,7 @@ use adw::prelude::*;
 use gtk::{gio, glib};
 use sourceview5::prelude::*;
 
+use crate::completion::{LatexProvider, SharedData};
 use crate::config;
 
 struct Doc {
@@ -34,6 +35,7 @@ pub struct Editor {
     tab_view: adw::TabView,
     stack: gtk::Stack,
     root: PathBuf,
+    completion: LatexProvider,
     docs: RefCell<Vec<Doc>>,
     on_change: Callback,
     on_save: Callback,
@@ -46,7 +48,7 @@ pub struct Editor {
 }
 
 impl Editor {
-    pub fn new(root: PathBuf) -> Rc<Editor> {
+    pub fn new(root: PathBuf, data: SharedData) -> Rc<Editor> {
         let tab_view = adw::TabView::new();
         tab_view.set_vexpand(true);
         let tab_bar = adw::TabBar::builder().view(&tab_view).autohide(false).expand_tabs(false).css_classes(["rutex-tabs"]).build();
@@ -79,6 +81,7 @@ impl Editor {
             tab_view,
             stack,
             root,
+            completion: LatexProvider::new(data),
             docs: RefCell::default(),
             on_change: RefCell::default(),
             on_save: RefCell::default(),
@@ -241,6 +244,12 @@ impl Editor {
             .right_margin(16)
             .css_classes(["rutex-editor"])
             .build();
+        if lang.is_some() {
+            let completion = view.completion();
+            completion.add_provider(&self.completion);
+            completion.set_select_on_show(true);
+            completion.set_show_icons(true);
+        }
         let scroller = gtk::ScrolledWindow::builder().child(&view).vexpand(true).build();
 
         let page = self.tab_view.append(&scroller);

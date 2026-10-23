@@ -13,7 +13,8 @@ use crate::compiler::{self, Outcome};
 use crate::config::{self, ThemeMode};
 use crate::editor::Editor;
 use crate::filetree::FileTree;
-use crate::index::{self, Index, Section};
+use crate::completion::{Data, SharedData};
+use crate::index::{self, Section};
 use crate::logparse::Severity;
 use crate::pdf::PdfView;
 use crate::project::Project;
@@ -267,7 +268,7 @@ pub struct ProjectWindow {
     compile: RefCell<CompileState>,
     autosave: RefCell<Option<glib::SourceId>>,
     pdf_mtime: Cell<Option<SystemTime>>,
-    index: Rc<RefCell<Index>>,
+    data: SharedData,
     index_generation: Cell<u64>,
     outline_list: gtk::ListBox,
     sections: adw::ToggleGroup,
@@ -276,7 +277,8 @@ pub struct ProjectWindow {
 
 impl ProjectWindow {
     fn new(app: &adw::Application, project: Project, first: &Path) -> Rc<ProjectWindow> {
-        let editor = Editor::new(project.root.clone());
+        let data = SharedData::default();
+        let editor = Editor::new(project.root.clone(), data.clone());
         let pdf = PdfView::new();
 
         // --- Barra superior ---
@@ -457,7 +459,7 @@ impl ProjectWindow {
             compile: RefCell::default(),
             autosave: RefCell::default(),
             pdf_mtime: Cell::new(None),
-            index: Rc::default(),
+            data,
             index_generation: Cell::new(0),
             outline_list,
             sections,
@@ -469,6 +471,7 @@ impl ProjectWindow {
         this.connect_signals();
         this.add_actions(&sidebar_btn);
         this.open_file(first);
+        this.editor.focus();
 
         // PDF de la sesión anterior: vista previa instantánea mientras se recompila.
         let pdf_path = this.project.borrow().pdf_path();
@@ -507,7 +510,7 @@ impl ProjectWindow {
         let weak = Rc::downgrade(self);
         self.outline_list.connect_row_activated(move |_, row| {
             let Some(this) = weak.upgrade() else { return };
-            let target = this.index.borrow().outline.get(row.index() as usize).map(|s| (s.file.clone(), s.line));
+            let target = this.data.borrow().index.outline.get(row.index() as usize).map(|s| (s.file.clone(), s.line));
             if let Some((file, line)) = target {
                 this.goto(&file, line);
             }
@@ -682,14 +685,19 @@ impl ProjectWindow {
         let p = self.project.borrow().clone();
         let weak = Rc::downgrade(self);
         glib::spawn_future_local(async move {
-            let built = gio::spawn_blocking(move || index::build(&p.root, &p.main, &p.files)).await;
+            let built = gio::spawn_blocking(move || {
+                let idx = index::build(&p.root, &p.main, &p.files);
+                let tex: Vec<PathBuf> = p.files.iter().filter(|f| crate::project::has_ext(f, "tex")).cloned().collect();
+                (idx, tex, crate::project::images(&p.root))
+            })
+            .await;
             let Some(this) = weak.upgrade() else { return };
             if this.index_generation.get() != generation {
                 return;
             }
-            if let Ok(idx) = built {
+            if let Ok((idx, tex_files, images)) = built {
                 this.fill_outline(&idx.outline);
-                *this.index.borrow_mut() = idx;
+                *this.data.borrow_mut() = Data { index: idx, tex_files, images };
             }
         });
     }
