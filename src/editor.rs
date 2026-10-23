@@ -1,35 +1,44 @@
-//! Editor de texto: un `sourceview5::View` y un buffer por archivo abierto
-//! (se conserva el historial de deshacer al cambiar de archivo), autoguardado
-//! atómico, búsqueda y modo Vim opcional.
+//! Editor con pestañas: una vista de GtkSourceView por archivo abierto (cada una
+//! conserva su historial de deshacer y su posición), autoguardado atómico,
+//! búsqueda y modo Vim opcional.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::rc::{Rc, Weak};
 use std::time::SystemTime;
 
-use gtk::prelude::*;
-use gtk::glib;
+use adw::prelude::*;
+use gtk::{gio, glib};
 use sourceview5::prelude::*;
 
+use crate::config;
+
 struct Doc {
+    rel: PathBuf,
     buffer: sourceview5::Buffer,
+    view: sourceview5::View,
+    page: adw::TabPage,
     mtime: Option<SystemTime>,
+    vim: Option<(gtk::EventControllerKey, sourceview5::VimIMContext)>,
 }
 
 type Callback = RefCell<Option<Box<dyn Fn()>>>;
 
 pub struct Editor {
     pub widget: gtk::Box,
-    view: sourceview5::View,
-    root: RefCell<PathBuf>,
-    docs: RefCell<HashMap<PathBuf, Doc>>,
-    current: RefCell<Option<PathBuf>>,
+    /// "Ln 12, Col 4" del archivo actual (para la barra de estado).
+    pub position_label: gtk::Label,
+    /// Línea de comandos del modo Vim (para la barra de estado).
+    pub vim_label: gtk::Label,
+    tab_view: adw::TabView,
+    stack: gtk::Stack,
+    root: PathBuf,
+    docs: RefCell<Vec<Doc>>,
     on_change: Callback,
     on_save: Callback,
-    vim: RefCell<Option<(gtk::EventControllerKey, sourceview5::VimIMContext)>>,
-    vim_label: gtk::Label,
+    on_switch: Callback,
+    vim_binding: RefCell<Option<glib::Binding>>,
     search_bar: gtk::SearchBar,
     search_entry: gtk::SearchEntry,
     search_settings: sourceview5::SearchSettings,
@@ -38,55 +47,51 @@ pub struct Editor {
 
 impl Editor {
     pub fn new(root: PathBuf) -> Rc<Editor> {
-        let view = sourceview5::View::builder()
-            .monospace(true)
-            .show_line_numbers(true)
-            .highlight_current_line(true)
-            .auto_indent(true)
-            .indent_width(2)
-            .tab_width(2)
-            .insert_spaces_instead_of_tabs(true)
-            .smart_backspace(true)
-            .wrap_mode(gtk::WrapMode::WordChar)
-            .top_margin(8)
-            .bottom_margin(200)
-            .left_margin(6)
-            .right_margin(12)
-            .vexpand(true)
+        let tab_view = adw::TabView::new();
+        tab_view.set_vexpand(true);
+        let tab_bar = adw::TabBar::builder().view(&tab_view).autohide(false).expand_tabs(false).css_classes(["rutex-tabs"]).build();
+
+        let empty = adw::StatusPage::builder()
+            .icon_name("text-x-generic-symbolic")
+            .title("Ningún archivo abierto")
+            .description("Elige uno en la barra lateral o pulsa Ctrl+P")
+            .css_classes(["compact"])
             .build();
-        view.add_css_class("rutex-editor");
+        let stack = gtk::Stack::builder().vexpand(true).build();
+        stack.add_named(&tab_view, Some("tabs"));
+        stack.add_named(&empty, Some("empty"));
 
-        let scroller = gtk::ScrolledWindow::builder().child(&view).vexpand(true).build();
-
-        let search_entry = gtk::SearchEntry::builder().placeholder_text("Buscar…").width_chars(32).build();
+        let search_entry = gtk::SearchEntry::builder().placeholder_text("Buscar en el archivo…").width_chars(32).build();
         let search_bar = gtk::SearchBar::builder().child(&search_entry).show_close_button(true).build();
         search_bar.connect_entry(&search_entry);
 
-        let vim_label = gtk::Label::builder().xalign(0.0).visible(false).css_classes(["vim-bar", "monospace"]).build();
-
         let widget = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        widget.append(&tab_bar);
         widget.append(&search_bar);
-        widget.append(&scroller);
-        widget.append(&vim_label);
+        widget.append(&stack);
 
         let search_settings = sourceview5::SearchSettings::builder().wrap_around(true).case_sensitive(false).build();
 
         let editor = Rc::new(Editor {
             widget,
-            view,
-            root: RefCell::new(root),
+            position_label: gtk::Label::new(None),
+            vim_label: gtk::Label::builder().css_classes(["monospace"]).visible(false).build(),
+            tab_view,
+            stack,
+            root,
             docs: RefCell::default(),
-            current: RefCell::default(),
             on_change: RefCell::default(),
             on_save: RefCell::default(),
-            vim: RefCell::default(),
-            vim_label,
+            on_switch: RefCell::default(),
+            vim_binding: RefCell::default(),
             search_bar,
             search_entry,
             search_settings,
             search_ctx: RefCell::default(),
         });
+        editor.connect_tabs();
         editor.connect_search();
+        editor.update_empty();
         editor
     }
 
@@ -98,49 +103,119 @@ impl Editor {
         *self.on_save.borrow_mut() = Some(Box::new(f));
     }
 
+    /// Cambio de pestaña (archivo actual distinto).
+    pub fn connect_switch(&self, f: impl Fn() + 'static) {
+        *self.on_switch.borrow_mut() = Some(Box::new(f));
+    }
+
+    fn emit(cb: &Callback) {
+        if let Some(cb) = cb.borrow().as_ref() {
+            cb();
+        }
+    }
+
+    fn connect_tabs(self: &Rc<Self>) {
+        let weak = Rc::downgrade(self);
+        self.tab_view.connect_selected_page_notify(move |_| {
+            if let Some(this) = weak.upgrade() {
+                this.on_selected();
+            }
+        });
+
+        let weak = Rc::downgrade(self);
+        self.tab_view.connect_close_page(move |view, page| {
+            if let Some(this) = weak.upgrade() {
+                let idx = this.docs.borrow().iter().position(|d| d.page == *page);
+                if let Some(idx) = idx {
+                    // Autoguardado: al cerrar nunca se pierde nada.
+                    this.save_doc_at(idx);
+                    this.docs.borrow_mut().remove(idx);
+                }
+                view.close_page_finish(page, true);
+                this.update_empty();
+            }
+            glib::Propagation::Stop
+        });
+    }
+
+    fn update_empty(&self) {
+        self.stack.set_visible_child_name(if self.tab_view.n_pages() > 0 { "tabs" } else { "empty" });
+    }
+
+    fn on_selected(self: &Rc<Self>) {
+        let docs = self.docs.borrow();
+        let current = self.tab_view.selected_page().and_then(|p| docs.iter().find(|d| d.page == p));
+        if let Some(doc) = current {
+            let ctx = sourceview5::SearchContext::new(&doc.buffer, Some(&self.search_settings));
+            ctx.set_highlight(self.search_bar.is_search_mode());
+            *self.search_ctx.borrow_mut() = Some(ctx);
+            if let Some(b) = self.vim_binding.borrow_mut().take() {
+                b.unbind();
+            }
+            if let Some((_, im)) = &doc.vim {
+                *self.vim_binding.borrow_mut() = Some(im.bind_property("command-bar-text", &self.vim_label, "label").sync_create().build());
+            }
+            update_position(&doc.buffer, &self.position_label);
+        } else {
+            self.position_label.set_label("");
+        }
+        drop(docs);
+        Self::emit(&self.on_switch);
+    }
+
+    fn current_doc<R>(&self, f: impl FnOnce(&Doc) -> R) -> Option<R> {
+        let page = self.tab_view.selected_page()?;
+        self.docs.borrow().iter().find(|d| d.page == page).map(f)
+    }
+
     pub fn current(&self) -> Option<PathBuf> {
-        self.current.borrow().clone()
+        self.current_doc(|d| d.rel.clone())
     }
 
     pub fn cursor_line(&self) -> u32 {
-        let buffer = self.view.buffer();
-        buffer.iter_at_mark(&buffer.get_insert()).line() as u32 + 1
+        self.current_doc(|d| d.buffer.iter_at_mark(&d.buffer.get_insert()).line() as u32 + 1).unwrap_or(1)
     }
 
-    /// Muestra un archivo (relativo a la raíz), cargándolo si hace falta.
-    pub fn open(self: &Rc<Self>, rel: &Path) -> Result<(), String> {
-        if self.current.borrow().as_deref() == Some(rel) {
-            return Ok(());
-        }
-        if !self.docs.borrow().contains_key(rel) {
-            let doc = self.load(rel)?;
-            self.docs.borrow_mut().insert(rel.to_path_buf(), doc);
-        }
-        let buffer = self.docs.borrow()[rel].buffer.clone();
-        self.view.set_buffer(Some(&buffer));
-        *self.current.borrow_mut() = Some(rel.to_path_buf());
+    pub fn current_view(&self) -> Option<sourceview5::View> {
+        self.current_doc(|d| d.view.clone())
+    }
 
-        let ctx = sourceview5::SearchContext::new(&buffer, Some(&self.search_settings));
-        ctx.set_highlight(self.search_bar.is_search_mode());
-        *self.search_ctx.borrow_mut() = Some(ctx);
+    /// Muestra un archivo (relativo a la raíz) en su pestaña, cargándolo si hace falta.
+    pub fn open(self: &Rc<Self>, rel: &Path) -> Result<(), String> {
+        let existing = self.docs.borrow().iter().find(|d| d.rel == rel).map(|d| d.page.clone());
+        let page = match existing {
+            Some(page) => page,
+            None => self.load(rel)?,
+        };
+        let changed = self.tab_view.selected_page().as_ref() != Some(&page);
+        self.tab_view.set_selected_page(&page);
+        if !changed {
+            // La primera pestaña se selecciona sola al añadirla, antes de registrarla.
+            self.on_selected();
+        }
+        self.update_empty();
         Ok(())
     }
 
-    fn load(self: &Rc<Self>, rel: &Path) -> Result<Doc, String> {
-        let abs = self.root.borrow().join(rel);
+    fn load(self: &Rc<Self>, rel: &Path) -> Result<adw::TabPage, String> {
+        let abs = self.root.join(rel);
         let bytes = fs::read(&abs).map_err(|e| format!("No se pudo abrir {}: {e}", rel.display()))?;
         let text = String::from_utf8(bytes).map_err(|_| format!("{} no está en UTF-8", rel.display()))?;
 
         let buffer = sourceview5::Buffer::new(None);
-        let lang_id = if crate::project::has_ext(rel, "bib") { "bibtex" } else { "latex" };
-        let is_tex_like = ["tex", "bib", "sty", "cls", "ltx", "dtx", "bbx", "cbx", "def", "cfg"]
-            .iter()
-            .any(|e| crate::project::has_ext(rel, e));
-        if is_tex_like {
-            buffer.set_language(sourceview5::LanguageManager::default().language(lang_id).as_ref());
+        let is_tex_like = ["tex", "sty", "cls", "ltx", "dtx", "bbx", "cbx", "def", "cfg"].iter().any(|e| crate::project::has_ext(rel, e));
+        let lang = if crate::project::has_ext(rel, "bib") {
+            Some("bibtex")
+        } else if is_tex_like {
+            Some("latex")
+        } else {
+            None
+        };
+        if let Some(id) = lang {
+            buffer.set_language(sourceview5::LanguageManager::default().language(id).as_ref());
         }
         buffer.set_highlight_matching_brackets(true);
-        self.apply_scheme(&buffer);
+        apply_scheme(&buffer);
 
         buffer.begin_irreversible_action();
         buffer.set_text(&text);
@@ -148,48 +223,89 @@ impl Editor {
         buffer.set_modified(false);
         buffer.place_cursor(&buffer.start_iter());
 
+        let cfg = config::get();
+        let view = sourceview5::View::builder()
+            .buffer(&buffer)
+            .monospace(true)
+            .show_line_numbers(true)
+            .highlight_current_line(true)
+            .auto_indent(true)
+            .indent_width(2)
+            .tab_width(2)
+            .insert_spaces_instead_of_tabs(true)
+            .smart_backspace(true)
+            .wrap_mode(if cfg.wrap { gtk::WrapMode::WordChar } else { gtk::WrapMode::None })
+            .top_margin(10)
+            .bottom_margin(240)
+            .left_margin(8)
+            .right_margin(16)
+            .css_classes(["rutex-editor"])
+            .build();
+        let scroller = gtk::ScrolledWindow::builder().child(&view).vexpand(true).build();
+
+        let page = self.tab_view.append(&scroller);
+        let name = rel.file_name().unwrap_or_default().to_string_lossy().into_owned();
+        page.set_title(&name);
+        page.set_tooltip(&glib::markup_escape_text(&rel.display().to_string()));
+        page.set_icon(Some(&gio::ThemedIcon::new(file_icon(rel))));
+
         let weak: Weak<Editor> = Rc::downgrade(self);
         buffer.connect_changed(move |_| {
-            if let Some(this) = weak.upgrade()
-                && let Some(cb) = this.on_change.borrow().as_ref() {
-                    cb();
-                }
+            if let Some(this) = weak.upgrade() {
+                Self::emit(&this.on_change);
+            }
         });
-        Ok(Doc { buffer, mtime: mtime(&abs) })
+        let label = self.position_label.clone();
+        let weak_view = view.downgrade();
+        buffer.connect_cursor_position_notify(move |b| {
+            if weak_view.upgrade().is_some_and(|v| v.has_focus()) {
+                update_position(b, &label);
+            }
+        });
+
+        let mut doc = Doc { rel: rel.to_path_buf(), buffer, view, page: page.clone(), mtime: mtime(&abs), vim: None };
+        if cfg.vim {
+            self.attach_vim(&mut doc);
+        }
+        self.docs.borrow_mut().push(doc);
+        Ok(page)
+    }
+
+    fn save_doc_at(&self, idx: usize) -> Option<String> {
+        let mut docs = self.docs.borrow_mut();
+        let doc = docs.get_mut(idx)?;
+        if !doc.buffer.is_modified() {
+            return None;
+        }
+        let abs = self.root.join(&doc.rel);
+        let mut warning = None;
+        if doc.mtime.is_some() && mtime(&abs) != doc.mtime {
+            warning = Some(format!("{} había cambiado fuera de rutex; se ha sobrescrito", doc.rel.display()));
+        }
+        let (start, end) = doc.buffer.bounds();
+        let text = doc.buffer.text(&start, &end, true);
+        match write_atomic(&abs, text.as_bytes()) {
+            Ok(()) => {
+                doc.buffer.set_modified(false);
+                doc.mtime = mtime(&abs);
+                warning
+            }
+            Err(e) => Some(format!("No se pudo guardar {}: {e}", doc.rel.display())),
+        }
     }
 
     /// Guarda los buffers modificados. Devuelve los mensajes de error/aviso.
     pub fn save_all(&self) -> Vec<String> {
-        let root = self.root.borrow().clone();
-        let mut msgs = Vec::new();
-        for (rel, doc) in self.docs.borrow_mut().iter_mut() {
-            if !doc.buffer.is_modified() {
-                continue;
-            }
-            let abs = root.join(rel);
-            if doc.mtime.is_some() && mtime(&abs) != doc.mtime {
-                msgs.push(format!("{} había cambiado fuera de rutex; se ha sobrescrito", rel.display()));
-            }
-            let (start, end) = doc.buffer.bounds();
-            let text = doc.buffer.text(&start, &end, true);
-            match write_atomic(&abs, text.as_bytes()) {
-                Ok(()) => {
-                    doc.buffer.set_modified(false);
-                    doc.mtime = mtime(&abs);
-                }
-                Err(e) => msgs.push(format!("No se pudo guardar {}: {e}", rel.display())),
-            }
-        }
-        msgs
+        let n = self.docs.borrow().len();
+        (0..n).filter_map(|i| self.save_doc_at(i)).collect()
     }
 
     /// Recarga los archivos que han cambiado en disco (git pull, otro editor…)
     /// y que no tienen cambios sin guardar aquí. Devuelve si recargó alguno.
     pub fn reload_external(&self) -> bool {
-        let root = self.root.borrow().clone();
         let mut reloaded = false;
-        for (rel, doc) in self.docs.borrow_mut().iter_mut() {
-            let abs = root.join(rel);
+        for doc in self.docs.borrow_mut().iter_mut() {
+            let abs = self.root.join(&doc.rel);
             let disk = mtime(&abs);
             if disk.is_none() || disk == doc.mtime || doc.buffer.is_modified() {
                 continue;
@@ -212,64 +328,116 @@ impl Editor {
     /// Abre `rel` y coloca el cursor en `line` (desde 1).
     pub fn goto(self: &Rc<Self>, rel: &Path, line: u32) -> Result<(), String> {
         self.open(rel)?;
-        let buffer = self.view.buffer();
+        let Some(view) = self.current_view() else { return Ok(()) };
+        let buffer = view.buffer();
         if let Some(it) = buffer.iter_at_line(line.saturating_sub(1) as i32) {
             buffer.place_cursor(&it);
         }
-        let view = self.view.clone();
-        // Tras cambiar de buffer las alturas de línea aún no están calculadas.
+        // Tras cambiar de pestaña las alturas de línea aún no están calculadas.
+        let v = view.clone();
         glib::idle_add_local_once(move || {
-            let buffer = view.buffer();
-            view.scroll_to_mark(&buffer.get_insert(), 0.0, true, 0.0, 0.35);
+            let buffer = v.buffer();
+            v.scroll_to_mark(&buffer.get_insert(), 0.0, true, 0.0, 0.35);
         });
-        self.view.grab_focus();
+        view.grab_focus();
         Ok(())
+    }
+
+    pub fn close_current(&self) {
+        if let Some(page) = self.tab_view.selected_page() {
+            self.tab_view.close_page(&page);
+        }
+    }
+
+    pub fn focus(&self) {
+        if let Some(v) = self.current_view() {
+            v.grab_focus();
+        }
     }
 
     /// Vuelve a aplicar el esquema de colores (cambio de tema).
     pub fn refresh_scheme(&self) {
-        for doc in self.docs.borrow().values() {
-            self.apply_scheme(&doc.buffer);
+        for doc in self.docs.borrow().iter() {
+            apply_scheme(&doc.buffer);
         }
     }
 
-    fn apply_scheme(&self, buffer: &sourceview5::Buffer) {
-        let id = crate::theme::scheme_id();
-        buffer.set_style_scheme(sourceview5::StyleSchemeManager::default().scheme(&id).as_ref());
+    pub fn set_wrap(&self, wrap: bool) {
+        for doc in self.docs.borrow().iter() {
+            doc.view.set_wrap_mode(if wrap { gtk::WrapMode::WordChar } else { gtk::WrapMode::None });
+        }
     }
 
     pub fn set_vim(self: &Rc<Self>, enabled: bool) {
-        if let Some((key, im)) = self.vim.borrow_mut().take() {
-            self.view.remove_controller(&key);
-            im.set_client_widget(None::<&gtk::Widget>);
+        {
+            let mut docs = self.docs.borrow_mut();
+            for doc in docs.iter_mut() {
+                if let Some((key, im)) = doc.vim.take() {
+                    doc.view.remove_controller(&key);
+                    im.set_client_widget(None::<&gtk::Widget>);
+                }
+                if enabled {
+                    self.attach_vim(doc);
+                }
+            }
         }
         self.vim_label.set_visible(enabled);
-        if !enabled {
-            return;
-        }
+        self.on_selected();
+    }
+
+    fn attach_vim(self: &Rc<Self>, doc: &mut Doc) {
         let im = sourceview5::VimIMContext::new();
         let key = gtk::EventControllerKey::new();
         key.set_im_context(Some(&im));
         key.set_propagation_phase(gtk::PropagationPhase::Capture);
-        self.view.add_controller(key.clone());
-        im.set_client_widget(Some(&self.view));
-        im.bind_property("command-bar-text", &self.vim_label, "label").sync_create().build();
+        doc.view.add_controller(key.clone());
+        im.set_client_widget(Some(&doc.view));
         let weak = Rc::downgrade(self);
         im.connect_write(move |_, _, _| {
-            if let Some(this) = weak.upgrade()
-                && let Some(cb) = this.on_save.borrow().as_ref() {
-                    cb();
-                }
+            if let Some(this) = weak.upgrade() {
+                Self::emit(&this.on_save);
+            }
         });
-        *self.vim.borrow_mut() = Some((key, im));
+        self.vim_label.set_visible(true);
+        doc.vim = Some((key, im));
+    }
+
+    /// Un archivo se ha renombrado/movido en disco: actualiza su pestaña.
+    pub fn rename(&self, from: &Path, to: &Path) {
+        for doc in self.docs.borrow_mut().iter_mut() {
+            if let Ok(rest) = doc.rel.strip_prefix(from) {
+                doc.rel = if rest.as_os_str().is_empty() { to.to_path_buf() } else { to.join(rest) };
+                doc.page.set_title(&doc.rel.file_name().unwrap_or_default().to_string_lossy());
+                doc.page.set_tooltip(&glib::markup_escape_text(&doc.rel.display().to_string()));
+                doc.mtime = mtime(&self.root.join(&doc.rel));
+            }
+        }
+        Self::emit(&self.on_switch);
+    }
+
+    /// Un archivo (o carpeta) se ha borrado: cierra sus pestañas sin guardar.
+    pub fn forget(&self, path: &Path) {
+        let pages: Vec<adw::TabPage> = {
+            let mut docs = self.docs.borrow_mut();
+            let (gone, keep): (Vec<Doc>, Vec<Doc>) = docs.drain(..).partition(|d| d.rel.starts_with(path));
+            *docs = keep;
+            gone.into_iter().map(|d| d.page).collect()
+        };
+        for page in pages {
+            self.tab_view.close_page(&page);
+        }
+        self.update_empty();
     }
 
     pub fn find(&self) {
-        let buffer = self.view.buffer();
-        if let Some((s, e)) = buffer.selection_bounds()
-            && s.line() == e.line() {
+        if let Some(view) = self.current_view() {
+            let buffer = view.buffer();
+            if let Some((s, e)) = buffer.selection_bounds()
+                && s.line() == e.line()
+            {
                 self.search_entry.set_text(&buffer.text(&s, &e, false));
             }
+        }
         self.search_bar.set_search_mode(true);
         self.search_entry.grab_focus();
     }
@@ -282,24 +450,17 @@ impl Editor {
             this.search_settings.set_search_text((!text.is_empty()).then_some(text.as_str()));
             this.search_step(true, true);
         });
-        let weak = Rc::downgrade(self);
-        self.search_entry.connect_activate(move |_| {
-            if let Some(this) = weak.upgrade() {
-                this.search_step(true, false);
+        let step = |this: &Rc<Self>, forward: bool| {
+            let weak = Rc::downgrade(this);
+            move |_: &gtk::SearchEntry| {
+                if let Some(this) = weak.upgrade() {
+                    this.search_step(forward, false);
+                }
             }
-        });
-        let weak = Rc::downgrade(self);
-        self.search_entry.connect_next_match(move |_| {
-            if let Some(this) = weak.upgrade() {
-                this.search_step(true, false);
-            }
-        });
-        let weak = Rc::downgrade(self);
-        self.search_entry.connect_previous_match(move |_| {
-            if let Some(this) = weak.upgrade() {
-                this.search_step(false, false);
-            }
-        });
+        };
+        self.search_entry.connect_activate(step(self, true));
+        self.search_entry.connect_next_match(step(self, true));
+        self.search_entry.connect_previous_match(step(self, false));
         let weak = Rc::downgrade(self);
         self.search_bar.connect_search_mode_enabled_notify(move |bar| {
             let Some(this) = weak.upgrade() else { return };
@@ -307,7 +468,7 @@ impl Editor {
                 ctx.set_highlight(bar.is_search_mode());
             }
             if !bar.is_search_mode() {
-                this.view.grab_focus();
+                this.focus();
             }
         });
     }
@@ -315,7 +476,8 @@ impl Editor {
     fn search_step(&self, forward: bool, from_start_of_selection: bool) {
         let ctx = self.search_ctx.borrow();
         let Some(ctx) = ctx.as_ref() else { return };
-        let buffer = self.view.buffer();
+        let Some(view) = self.current_view() else { return };
+        let buffer = view.buffer();
         let insert = buffer.iter_at_mark(&buffer.get_insert());
         let (sel_start, sel_end) = buffer.selection_bounds().unwrap_or((insert, insert));
         let found = if forward {
@@ -325,8 +487,31 @@ impl Editor {
         };
         if let Some((mut s, e, _)) = found {
             buffer.select_range(&s, &e);
-            self.view.scroll_to_iter(&mut s, 0.1, false, 0.0, 0.0);
+            view.scroll_to_iter(&mut s, 0.1, false, 0.0, 0.0);
         }
+    }
+}
+
+fn update_position(buffer: &sourceview5::Buffer, label: &gtk::Label) {
+    let it = buffer.iter_at_mark(&buffer.get_insert());
+    label.set_label(&format!("Ln {}, Col {}", it.line() + 1, it.line_offset() + 1));
+}
+
+fn apply_scheme(buffer: &sourceview5::Buffer) {
+    let id = crate::theme::scheme_id();
+    buffer.set_style_scheme(sourceview5::StyleSchemeManager::default().scheme(&id).as_ref());
+}
+
+pub fn file_icon(path: &Path) -> &'static str {
+    let ext = path.extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
+    match ext.as_str() {
+        "tex" | "ltx" => "text-x-generic-symbolic",
+        "bib" => "x-office-address-book-symbolic",
+        "sty" | "cls" | "cfg" | "def" | "bst" => "preferences-other-symbolic",
+        "png" | "jpg" | "jpeg" | "gif" | "svg" | "webp" | "eps" => "image-x-generic-symbolic",
+        "pdf" => "x-office-document-symbolic",
+        "md" | "txt" => "text-x-generic-symbolic",
+        _ => "text-x-generic-symbolic",
     }
 }
 

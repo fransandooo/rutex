@@ -13,17 +13,7 @@ use gtk::{gio, glib};
 
 const APP_ID: &str = "dev.fran.Rutex";
 
-const CSS: &str = "
-.vim-bar { padding: 2px 8px; font-size: 10pt; }
-.pdf-view { background-color: var(--rutex-pdf-bg, shade(@window_bg_color, 0.82)); }
-.pdf-view > row { padding: 8px 0; background: none; }
-.pdf-view > row:hover, .pdf-view > row:selected { background: none; }
-.pdf-page { box-shadow: 0 1px 5px alpha(black, 0.35); }
-.pdf-controls { border-radius: 10px; padding: 2px; }
-.issues-panel { background-color: @view_bg_color; }
-.issues image.error { color: @error_color; }
-.issues image.warning { color: @warning_color; }
-";
+const CSS: &str = include_str!("style.css");
 
 fn main() -> glib::ExitCode {
     let app = adw::Application::builder()

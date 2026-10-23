@@ -37,7 +37,8 @@ pub fn set_accels(app: &adw::Application) {
         ("win.zoom-fit", &["<Ctrl>0"]),
         ("win.toggle-sidebar", &["F9"]),
         ("win.toggle-issues", &["<Ctrl>e"]),
-        ("window.close", &["<Ctrl>w"]),
+        ("win.close-tab", &["<Ctrl>w"]),
+        ("window.close", &["<Ctrl><Shift>w"]),
         ("app.quit", &["<Ctrl>q"]),
     ];
     for (action, keys) in accels {
@@ -209,6 +210,23 @@ fn show_welcome(app: &adw::Application) {
     window.present();
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Status {
+    Busy,
+    Ok,
+    Warning,
+    Error,
+}
+
+/// `/home/u/tfm` → `~/tfm`.
+fn tilde(path: &Path) -> String {
+    let home = glib::home_dir();
+    match path.strip_prefix(&home) {
+        Ok(rest) => format!("~/{}", rest.display()),
+        Err(_) => path.display().to_string(),
+    }
+}
+
 #[derive(Default)]
 struct CompileState {
     running: bool,
@@ -230,14 +248,13 @@ pub struct ProjectWindow {
     project: RefCell<Project>,
     editor: Rc<Editor>,
     pdf: Rc<PdfView>,
-    title: adw::WindowTitle,
     toasts: adw::ToastOverlay,
     files_list: gtk::ListBox,
-    sidebar: gtk::ScrolledWindow,
-    spinner: gtk::Spinner,
+    spinner: adw::Spinner,
+    status_icon: gtk::Image,
     status: gtk::Label,
     issues_btn: gtk::ToggleButton,
-    issues_count: gtk::Label,
+    engine_label: gtk::Label,
     issues_revealer: gtk::Revealer,
     issues_list: gtk::ListBox,
     issues_stack: gtk::Stack,
@@ -254,19 +271,16 @@ impl ProjectWindow {
         let pdf = PdfView::new();
 
         // --- Barra superior ---
-        let title = adw::WindowTitle::new(&project.name(), "");
+        let title = adw::WindowTitle::new(&project.name(), &tilde(&project.root));
         let header = adw::HeaderBar::new();
         header.set_title_widget(Some(&title));
 
-        let sidebar_btn = gtk::ToggleButton::builder().icon_name("sidebar-show-symbolic").active(true).tooltip_text("Archivos (F9)").build();
-        let open_btn = gtk::Button::builder().icon_name("folder-open-symbolic").tooltip_text("Abrir proyecto (Ctrl+O)").action_name("win.open").build();
-        let new_btn = gtk::Button::builder().icon_name("document-new-symbolic").tooltip_text("Nuevo archivo (Ctrl+N)").action_name("win.new-file").build();
+        let sidebar_btn = gtk::ToggleButton::builder().icon_name("sidebar-show-symbolic").active(true).tooltip_text("Barra lateral (F9)").build();
         header.pack_start(&sidebar_btn);
-        header.pack_start(&open_btn);
-        header.pack_start(&new_btn);
 
         let menu = gio::Menu::new();
         let s1 = gio::Menu::new();
+        s1.append(Some("Abrir proyecto…"), Some("win.open"));
         s1.append(Some("Nuevo archivo…"), Some("win.new-file"));
         s1.append(Some("Usar este archivo como principal"), Some("win.set-main"));
         menu.append_section(None, &s1);
@@ -285,68 +299,92 @@ impl ProjectWindow {
         s3.append_submenu(Some("Tema"), &themes);
         s3.append(Some("Modo Vim"), Some("app.vim"));
         menu.append_section(None, &s3);
-        let menu_btn = gtk::MenuButton::builder().icon_name("open-menu-symbolic").menu_model(&menu).primary(true).build();
+        let menu_btn = gtk::MenuButton::builder().icon_name("open-menu-symbolic").menu_model(&menu).primary(true).tooltip_text("Menú").build();
 
-        let compile_btn = gtk::Button::builder().icon_name("media-playback-start-symbolic").tooltip_text("Compilar (Ctrl+Intro)").action_name("win.compile").build();
-        let spinner = gtk::Spinner::new();
-        let status = gtk::Label::builder().css_classes(["dim-label", "caption"]).build();
-        let issues_count = gtk::Label::new(None);
-        let issues_box = gtk::Box::builder().spacing(4).build();
-        issues_box.append(&gtk::Image::from_icon_name("dialog-warning-symbolic"));
-        issues_box.append(&issues_count);
-        let issues_btn = gtk::ToggleButton::builder().child(&issues_box).tooltip_text("Problemas (Ctrl+E)").visible(false).build();
+        let compile_btn = gtk::Button::builder()
+            .icon_name("media-playback-start-symbolic")
+            .tooltip_text("Compilar (Ctrl+Intro)")
+            .action_name("win.compile")
+            .css_classes(["compile-button"])
+            .build();
+
+        // Estado de la compilación: también abre el panel de problemas.
+        let spinner = adw::Spinner::builder().visible(false).build();
+        let status_icon = gtk::Image::from_icon_name("emblem-ok-symbolic");
+        let status = gtk::Label::new(Some("Listo"));
+        let status_box = gtk::Box::builder().spacing(6).build();
+        status_box.append(&spinner);
+        status_box.append(&status_icon);
+        status_box.append(&status);
+        let issues_btn = gtk::ToggleButton::builder().child(&status_box).tooltip_text("Problemas y salida (Ctrl+E)").css_classes(["flat", "compile-status"]).build();
 
         header.pack_end(&menu_btn);
         header.pack_end(&compile_btn);
         header.pack_end(&issues_btn);
-        header.pack_end(&status);
-        header.pack_end(&spinner);
 
         // --- Barra lateral ---
         let files_list = gtk::ListBox::builder().css_classes(["navigation-sidebar"]).build();
-        let sidebar = gtk::ScrolledWindow::builder()
-            .child(&files_list)
-            .hscrollbar_policy(gtk::PolicyType::Never)
-            .width_request(180)
-            .build();
+        let files_scroller = gtk::ScrolledWindow::builder().child(&files_list).hscrollbar_policy(gtk::PolicyType::Never).vexpand(true).build();
+        let sidebar_title = gtk::Label::builder().label("ARCHIVOS").xalign(0.0).hexpand(true).css_classes(["sidebar-title"]).build();
+        let new_file_btn = gtk::Button::builder().icon_name("document-new-symbolic").tooltip_text("Nuevo archivo (Ctrl+N)").action_name("win.new-file").css_classes(["flat"]).build();
+        let sidebar_header = gtk::Box::builder().spacing(2).css_classes(["sidebar-header"]).build();
+        sidebar_header.append(&sidebar_title);
+        sidebar_header.append(&new_file_btn);
+        let sidebar = gtk::Box::builder().orientation(gtk::Orientation::Vertical).css_classes(["rutex-sidebar"]).build();
+        sidebar.append(&sidebar_header);
+        sidebar.append(&files_scroller);
 
         // --- Panel de problemas ---
         let issues_list = gtk::ListBox::builder().css_classes(["issues"]).build();
-        let output = gtk::TextView::builder().editable(false).monospace(true).wrap_mode(gtk::WrapMode::WordChar).left_margin(8).top_margin(6).build();
+        let output = gtk::TextView::builder().editable(false).monospace(true).wrap_mode(gtk::WrapMode::WordChar).left_margin(10).top_margin(6).build();
         let issues_stack = gtk::Stack::new();
         issues_stack.add_titled(&gtk::ScrolledWindow::builder().child(&issues_list).build(), Some("issues"), "Problemas");
         issues_stack.add_titled(&gtk::ScrolledWindow::builder().child(&output).build(), Some("output"), "Salida de latexmk");
-        let switcher = gtk::StackSwitcher::builder().stack(&issues_stack).halign(gtk::Align::Start).margin_start(6).margin_top(4).margin_bottom(4).build();
-        let panel = gtk::Box::builder().orientation(gtk::Orientation::Vertical).height_request(190).css_classes(["issues-panel"]).build();
-        panel.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
-        panel.append(&switcher);
         issues_stack.set_vexpand(true);
+        let switcher = gtk::StackSwitcher::builder().stack(&issues_stack).halign(gtk::Align::Start).build();
+        let close_issues = gtk::Button::builder().icon_name("window-close-symbolic").css_classes(["flat", "circular"]).halign(gtk::Align::End).hexpand(true).action_name("win.toggle-issues").build();
+        let panel_header = gtk::Box::builder().css_classes(["panel-header"]).build();
+        panel_header.append(&switcher);
+        panel_header.append(&close_issues);
+        let panel = gtk::Box::builder().orientation(gtk::Orientation::Vertical).height_request(200).css_classes(["issues-panel"]).build();
+        panel.append(&panel_header);
         panel.append(&issues_stack);
         let issues_revealer = gtk::Revealer::builder().child(&panel).transition_type(gtk::RevealerTransitionType::SlideUp).build();
 
-        let editor_col = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        // --- Barra de estado ---
+        let engine_label = gtk::Label::new(None);
+        let statusbar = gtk::Box::builder().spacing(16).css_classes(["statusbar"]).build();
+        statusbar.append(&editor.position_label);
+        statusbar.append(&editor.vim_label);
+        statusbar.append(&gtk::Box::builder().hexpand(true).build());
+        statusbar.append(&engine_label);
+
+        let editor_col = gtk::Box::builder().orientation(gtk::Orientation::Vertical).css_classes(["editor-column"]).build();
         editor_col.append(&editor.widget);
         editor_col.append(&issues_revealer);
+        editor_col.append(&statusbar);
 
-        let left = gtk::Paned::builder()
-            .start_child(&sidebar)
-            .end_child(&editor_col)
-            .position(220)
-            .resize_start_child(false)
-            .shrink_start_child(false)
-            .shrink_end_child(false)
-            .build();
-        let main = gtk::Paned::builder().start_child(&left).end_child(&pdf.widget).shrink_start_child(false).shrink_end_child(false).build();
+        let main = gtk::Paned::builder().start_child(&editor_col).end_child(&pdf.widget).shrink_start_child(false).shrink_end_child(false).build();
         // Con Hyprland el tamaño de la ventana lo decide el gestor: repartimos
-        // el espacio la primera vez que sabemos cuánto hay (≈55 % editor, 45 % PDF).
+        // el espacio la primera vez que sabemos cuánto hay.
         let placed = Cell::new(false);
         main.connect_max_position_notify(move |paned| {
             if paned.max_position() > 400 && !placed.replace(true) {
-                paned.set_position((paned.max_position() as f64 * 0.56) as i32);
+                paned.set_position((paned.max_position() as f64 * 0.52) as i32);
             }
         });
+
+        let split = adw::OverlaySplitView::builder()
+            .sidebar(&sidebar)
+            .content(&main)
+            .min_sidebar_width(200.0)
+            .max_sidebar_width(300.0)
+            .sidebar_width_fraction(0.16)
+            .build();
+        sidebar_btn.bind_property("active", &split, "show-sidebar").bidirectional().sync_create().build();
+
         let toasts = adw::ToastOverlay::new();
-        toasts.set_child(Some(&main));
+        toasts.set_child(Some(&split));
 
         let toolbar = adw::ToolbarView::new();
         toolbar.add_top_bar(&header);
@@ -366,14 +404,13 @@ impl ProjectWindow {
             project: RefCell::new(project),
             editor,
             pdf,
-            title,
             toasts,
             files_list,
-            sidebar,
             spinner,
+            status_icon,
             status,
             issues_btn,
-            issues_count,
+            engine_label,
             issues_revealer,
             issues_list,
             issues_stack,
@@ -384,7 +421,6 @@ impl ProjectWindow {
             pdf_mtime: Cell::new(None),
         });
 
-        sidebar_btn.bind_property("active", &this.sidebar, "visible").sync_create().build();
         this.issues_btn.bind_property("active", &this.issues_revealer, "reveal-child").sync_create().build();
         this.editor.set_vim(config::get().vim);
         this.connect_signals();
@@ -413,6 +449,13 @@ impl ProjectWindow {
         self.editor.connect_save(move || {
             if let Some(this) = weak.upgrade() {
                 this.save_and_compile();
+            }
+        });
+
+        let weak = Rc::downgrade(self);
+        self.editor.connect_switch(move || {
+            if let Some(this) = weak.upgrade() {
+                this.select_current_file();
             }
         });
 
@@ -508,6 +551,7 @@ impl ProjectWindow {
         add("export-pdf", Box::new(|t| t.export_pdf()));
         add("open-pdf", Box::new(|t| t.open_pdf_external()));
         add("clean", Box::new(|t| t.clean()));
+        add("close-tab", Box::new(|t| t.editor.close_current()));
         add("toggle-issues", Box::new(|t| t.issues_btn.set_active(!t.issues_revealer.reveals_child())));
         let btn = sidebar_btn.clone();
         add("toggle-sidebar", Box::new(move |_| btn.set_active(!btn.is_active())));
@@ -518,22 +562,14 @@ impl ProjectWindow {
     }
 
     fn open_file(self: &Rc<Self>, rel: &Path) {
-        match self.editor.open(rel) {
-            Ok(()) => {
-                self.title.set_subtitle(&rel.display().to_string());
-                self.select_current_file();
-            }
-            Err(e) => self.toast(&e),
+        if let Err(e) = self.editor.open(rel) {
+            self.toast(&e);
         }
     }
 
     fn goto(self: &Rc<Self>, rel: &Path, line: u32) {
-        match self.editor.goto(rel, line) {
-            Ok(()) => {
-                self.title.set_subtitle(&rel.display().to_string());
-                self.select_current_file();
-            }
-            Err(e) => self.toast(&e),
+        if let Err(e) = self.editor.goto(rel, line) {
+            self.toast(&e);
         }
     }
 
@@ -551,7 +587,8 @@ impl ProjectWindow {
                 format!("<span alpha=\"55%\">{}/</span>{}", glib::markup_escape_text(&dir), glib::markup_escape_text(&name))
             };
             let label = gtk::Label::builder().label(markup).use_markup(true).xalign(0.0).ellipsize(gtk::pango::EllipsizeMode::Start).hexpand(true).build();
-            let row_box = gtk::Box::builder().spacing(6).build();
+            let row_box = gtk::Box::builder().spacing(8).build();
+            row_box.append(&gtk::Image::from_icon_name(crate::editor::file_icon(rel)));
             row_box.append(&label);
             if *rel == project.main {
                 row_box.append(&gtk::Image::builder().icon_name("starred-symbolic").tooltip_text("Archivo principal").build());
@@ -614,8 +651,8 @@ impl ProjectWindow {
         match compiler::spawn(&project) {
             Ok(running) => {
                 self.compile.borrow_mut().pid = Some(running.pid);
-                self.spinner.start();
-                self.status.set_label(&format!("Compilando ({})…", running.engine.label()));
+                self.set_status(Status::Busy, "Compilando…");
+                self.engine_label.set_label(running.engine.label());
                 let weak = Rc::downgrade(self);
                 glib::spawn_future_local(async move {
                     let outcome = running.wait().await;
@@ -631,11 +668,9 @@ impl ProjectWindow {
                 } else {
                     format!("No se pudo lanzar latexmk: {e}")
                 };
-                self.status.set_label("Sin TeX");
+                self.set_status(Status::Error, "Sin TeX");
                 self.output.buffer().set_text(&msg);
                 self.issues_stack.set_visible_child_name("output");
-                self.issues_count.set_label("!");
-                self.issues_btn.set_visible(true);
                 self.issues_btn.set_active(true);
             }
         }
@@ -648,7 +683,6 @@ impl ProjectWindow {
             *st = CompileState::default();
             pending
         };
-        self.spinner.stop();
 
         let project = self.project.borrow().clone();
         let shown: Vec<ShownIssue> = outcome
@@ -668,15 +702,13 @@ impl ProjectWindow {
         self.output.buffer().set_text(&outcome.output);
 
         let secs = format!("{:.1}", outcome.elapsed.as_secs_f64()).replace('.', ",");
-        let label = match (errors, outcome.pdf.is_some()) {
-            (0, true) if outcome.ok => format!("✓ {secs} s"),
-            (0, _) => "✗ Falló la compilación".to_string(),
-            (1, _) => "✗ 1 error".to_string(),
-            (n, _) => format!("✗ {n} errores"),
-        };
-        self.status.set_label(&label);
-        self.issues_count.set_label(&if errors > 0 { format!("{errors}·{warnings}") } else { warnings.to_string() });
-        self.issues_btn.set_visible(errors + warnings > 0 || !outcome.ok);
+        match (errors, warnings) {
+            (0, _) if !outcome.ok && outcome.pdf.is_none() => self.set_status(Status::Error, "Falló la compilación"),
+            (0, 0) => self.set_status(Status::Ok, &format!("{secs} s")),
+            (0, w) => self.set_status(Status::Warning, &format!("{w} {}", if w == 1 { "aviso" } else { "avisos" })),
+            (1, _) => self.set_status(Status::Error, "1 error"),
+            (e, _) => self.set_status(Status::Error, &format!("{e} errores")),
+        }
 
         if let Some((path, mtime)) = outcome.pdf {
             if self.pdf_mtime.get() != Some(mtime) {
@@ -692,6 +724,27 @@ impl ProjectWindow {
         if pending {
             self.compile();
         }
+    }
+
+    fn set_status(&self, status: Status, text: &str) {
+        let busy = status == Status::Busy;
+        self.spinner.set_visible(busy);
+        self.status_icon.set_visible(!busy);
+        self.status_icon.set_icon_name(Some(match status {
+            Status::Ok | Status::Busy => "emblem-ok-symbolic",
+            Status::Warning => "dialog-warning-symbolic",
+            Status::Error => "dialog-error-symbolic",
+        }));
+        for class in ["ok", "warning", "error", "busy"] {
+            self.issues_btn.remove_css_class(class);
+        }
+        self.issues_btn.add_css_class(match status {
+            Status::Ok => "ok",
+            Status::Warning => "warning",
+            Status::Error => "error",
+            Status::Busy => "busy",
+        });
+        self.status.set_label(text);
     }
 
     fn fill_issues(&self, issues: &[ShownIssue]) {
