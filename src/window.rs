@@ -449,6 +449,8 @@ pub struct ProjectWindow {
     output: gtk::TextView,
     issues: RefCell<Vec<ShownIssue>>,
     badboxes: RefCell<Vec<ShownIssue>>,
+    missing_banner: adw::Banner,
+    install_command: RefCell<String>,
     compile: RefCell<CompileState>,
     autosave: RefCell<Option<glib::SourceId>>,
     pdf_mtime: Cell<Option<SystemTime>>,
@@ -638,6 +640,8 @@ impl ProjectWindow {
         statusbar.append(&engine_label);
 
         let editor_col = gtk::Box::builder().orientation(gtk::Orientation::Vertical).css_classes(["editor-column"]).build();
+        let missing_banner = adw::Banner::builder().revealed(false).build();
+        editor_col.append(&missing_banner);
         editor_col.append(&editor.widget);
         editor_col.append(&issues_revealer);
         editor_col.append(&statusbar);
@@ -716,6 +720,8 @@ impl ProjectWindow {
             output,
             issues: RefCell::default(),
             badboxes: RefCell::default(),
+            missing_banner,
+            install_command: RefCell::default(),
             compile: RefCell::default(),
             autosave: RefCell::default(),
             pdf_mtime: Cell::new(None),
@@ -790,6 +796,15 @@ impl ProjectWindow {
             glib::Propagation::Proceed
         });
         self.window.add_controller(esc);
+
+        let weak = Rc::downgrade(self);
+        self.missing_banner.connect_button_clicked(move |_| {
+            if let Some(this) = weak.upgrade() {
+                let cmd = this.install_command.borrow().clone();
+                this.window.clipboard().set_text(&cmd);
+                this.toast(&trf("Copied: {} — paste it in a terminal, then compile again", &[&cmd]));
+            }
+        });
 
         let weak = Rc::downgrade(self);
         self.editor.connect_issue_click(move |rel, line| {
@@ -1421,6 +1436,7 @@ impl ProjectWindow {
                 self.auto_snapshot();
             }
         }
+        self.suggest_packages(&shown);
         *self.issues.borrow_mut() = shown;
         self.output.buffer().set_text(&outcome.output);
 
@@ -1603,6 +1619,46 @@ impl ProjectWindow {
         toolbar.set_content(Some(&page));
         dialog.set_child(Some(&toolbar));
         dialog.present(Some(&self.window));
+    }
+
+    /// "File `x.sty' not found": banner with the package that provides it.
+    fn suggest_packages(self: &Rc<Self>, issues: &[ShownIssue]) {
+        let files = crate::missing::missing_files(issues.iter().filter(|i| i.severity == Severity::Error).map(|i| i.message.as_str()));
+        if files.is_empty() || !crate::missing::available() {
+            self.missing_banner.set_revealed(false);
+            return;
+        }
+        let weak = Rc::downgrade(self);
+        glib::spawn_future_local(async move {
+            let found = gio::spawn_blocking(move || files.into_iter().map(|f| {
+                let p = crate::missing::lookup(&f);
+                (f, p)
+            }).collect::<Vec<_>>()).await.unwrap_or_default();
+            let Some(this) = weak.upgrade() else { return };
+            let packages: Vec<String> = found.iter().filter_map(|(_, p)| p.as_ref()?.arch_package()).collect::<std::collections::BTreeSet<_>>().into_iter().collect();
+            let unknown: Vec<&str> = found.iter().filter(|(_, p)| p.is_none()).map(|(f, _)| f.as_str()).collect();
+            let files: Vec<&str> = found.iter().filter(|(_, p)| p.is_some()).map(|(f, _)| f.as_str()).collect();
+            let has_pacman = gtk::glib::find_program_in_path("pacman").is_some();
+            let mut text = String::new();
+            if !packages.is_empty() {
+                text = if has_pacman {
+                    trf("Missing {}: install {}", &[&files.join(", "), &packages.join(" ")])
+                } else {
+                    let tl: Vec<String> = found.iter().filter_map(|(_, p)| p.as_ref().map(|p| p.package.clone())).collect();
+                    trf("Missing {}: it is in the TeX Live package {}", &[&files.join(", "), &tl.join(", ")])
+                };
+            }
+            if !unknown.is_empty() {
+                if !text.is_empty() {
+                    text.push_str(" · ");
+                }
+                text.push_str(&trf("{} is not in TeX Live: check the name", &[&unknown.join(", ")]));
+            }
+            *this.install_command.borrow_mut() = format!("sudo pacman -S --needed {}", packages.join(" "));
+            this.missing_banner.set_title(&glib::markup_escape_text(&text));
+            this.missing_banner.set_button_label(if has_pacman && !packages.is_empty() { Some(tr("Copy install command")) } else { None });
+            this.missing_banner.set_revealed(true);
+        });
     }
 
     /// Automatic version after a good build, at most every 5 minutes.

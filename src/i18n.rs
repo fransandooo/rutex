@@ -400,6 +400,11 @@ const TABLE: &[(&str, &str)] = &[
     ("Bibliography entries never cited", "Entradas de la bibliografía sin citar"),
     ("Text sticking into the margin", "Texto que se sale del margen"),
     ("To-do notes", "Notas pendientes"),
+    ("Missing {}: install {}", "Falta {}: instala {}"),
+    ("Missing {}: it is in the TeX Live package {}", "Falta {}: está en el paquete de TeX Live {}"),
+    ("{} is not in TeX Live: check the name", "{} no existe en TeX Live: revisa el nombre"),
+    ("Copy install command", "Copiar el comando de instalación"),
+    ("Copied: {} — paste it in a terminal, then compile again", "Copiado: {} — pégalo en una terminal y vuelve a compilar"),
 ];
 
 #[cfg(test)]
