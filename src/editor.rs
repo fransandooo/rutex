@@ -15,6 +15,7 @@ use sourceview5::prelude::*;
 
 use crate::completion::{LatexProvider, SharedData};
 use crate::config;
+use crate::hover::IssueHover;
 use crate::keys;
 
 struct Doc {
@@ -42,6 +43,8 @@ pub struct Editor {
     /// Problemas de la última compilación por archivo: (línea, es_error, mensaje).
     issues: RefCell<HashMap<PathBuf, Vec<(u32, bool, String)>>>,
     error_attrs: sourceview5::MarkAttributes,
+    hover: RefCell<Option<IssueHover>>,
+    on_issue_click: RefCell<Option<Box<dyn Fn(&Path, u32)>>>,
     warning_attrs: sourceview5::MarkAttributes,
     docs: RefCell<Vec<Doc>>,
     on_change: Callback,
@@ -90,6 +93,8 @@ impl Editor {
             root,
             completion: LatexProvider::new(data),
             issues: RefCell::default(),
+            hover: RefCell::default(),
+            on_issue_click: RefCell::default(),
             error_attrs: sourceview5::MarkAttributes::builder().icon_name("dialog-error-symbolic").build(),
             warning_attrs: sourceview5::MarkAttributes::builder().icon_name("dialog-warning-symbolic").build(),
             key_options: Rc::new(keys::Options { autopairs: Cell::new(config::get().autopairs), vim: Cell::new(config::get().vim) }),
@@ -261,6 +266,20 @@ impl Editor {
         view.set_show_line_marks(true);
         view.set_mark_attributes(MARK_ERROR, &self.error_attrs, 10);
         view.set_mark_attributes(MARK_WARNING, &self.warning_attrs, 5);
+        if let Some(h) = self.hover.borrow().as_ref() {
+            view.hover().add_provider(h);
+        }
+        let weak = Rc::downgrade(self);
+        view.connect_line_mark_activated(move |view, iter, _, _, _| {
+            let Some(this) = weak.upgrade() else { return };
+            let Some(buffer) = view.buffer().downcast::<sourceview5::Buffer>().ok() else { return };
+            let line = iter.line() as u32 + 1;
+            if let Some((rel, _)) = this.issues_at(&buffer, line)
+                && let Some(cb) = this.on_issue_click.borrow().as_ref()
+            {
+                cb(&rel, line);
+            }
+        });
         if lang.is_some() {
             let completion = view.completion();
             completion.add_provider(&self.completion);
@@ -390,7 +409,26 @@ impl Editor {
         self.color_marks();
     }
 
+    /// Clic en el icono de error/aviso del margen.
+    pub fn connect_issue_click(&self, f: impl Fn(&Path, u32) + 'static) {
+        *self.on_issue_click.borrow_mut() = Some(Box::new(f));
+    }
+
+    fn issues_at(&self, buffer: &sourceview5::Buffer, line: u32) -> Option<(PathBuf, Vec<(bool, String)>)> {
+        let docs = self.docs.borrow();
+        let doc = docs.iter().find(|d| d.buffer == *buffer)?;
+        let issues = self.issues.borrow();
+        let found: Vec<(bool, String)> = issues.get(&doc.rel)?.iter().filter(|(l, _, _)| *l == line).map(|(_, e, m)| (*e, m.clone())).collect();
+        (!found.is_empty()).then(|| (doc.rel.clone(), found))
+    }
+
     fn setup_marks(self: &Rc<Self>) {
+        let weak = Rc::downgrade(self);
+        let lookup: crate::hover::Lookup = Rc::new(move |buffer, line| {
+            weak.upgrade().and_then(|this| this.issues_at(buffer, line)).map(|(_, v)| v).unwrap_or_default()
+        });
+        *self.hover.borrow_mut() = Some(IssueHover::new(lookup));
+
         for attrs in [&self.error_attrs, &self.warning_attrs] {
             let weak = Rc::downgrade(self);
             attrs.connect_query_tooltip_text(move |_, mark| {

@@ -608,6 +608,12 @@ impl ProjectWindow {
             }
         });
         let weak = Rc::downgrade(self);
+        self.editor.connect_issue_click(move |rel, line| {
+            if let Some(this) = weak.upgrade() {
+                this.show_issue(rel, line);
+            }
+        });
+        let weak = Rc::downgrade(self);
         self.editor.connect_save(move || {
             if let Some(this) = weak.upgrade() {
                 this.save_and_compile();
@@ -1028,6 +1034,17 @@ impl ProjectWindow {
                 this.words_label.set_label(&format!("{} palabras", thousands(n)));
             }
         });
+    }
+
+    /// Abre el panel de problemas con el de esa línea seleccionado.
+    fn show_issue(&self, rel: &Path, line: u32) {
+        self.issues_stack.set_visible_child_name("issues");
+        self.issues_btn.set_active(true);
+        let idx = self.issues.borrow().iter().position(|i| i.file.as_deref() == Some(rel) && i.line == Some(line));
+        if let Some(row) = idx.and_then(|i| self.issues_list.row_at_index(i as i32)) {
+            self.issues_list.select_row(Some(&row));
+            row.grab_focus();
+        }
     }
 
     fn set_status(&self, status: Status, text: &str) {

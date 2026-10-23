@@ -196,3 +196,10 @@ popover.context-menu .menu-item.destructive {
 popover.context-menu separator {
   margin: 4px 6px;
 }
+
+/* ---------- Bocadillo de errores ---------- */
+.issue-bubble {
+  padding: 4px 2px;
+}
+.issue-bubble image.error { color: var(--error-color); }
+.issue-bubble image.warning { color: var(--warning-color); }

@@ -3,6 +3,7 @@ mod completion;
 mod config;
 mod editor;
 mod filetree;
+mod hover;
 mod index;
 mod keys;
 mod logparse;
