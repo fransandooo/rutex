@@ -6,11 +6,13 @@ mod filetree;
 mod index;
 mod keys;
 mod logparse;
+mod newproject;
 mod pdf;
 mod prefs;
 mod project;
 mod quickopen;
 mod synctex;
+mod templates;
 mod theme;
 mod window;
 

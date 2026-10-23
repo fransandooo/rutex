@@ -17,6 +17,7 @@ use crate::filetree::FileTree;
 use crate::completion::{Data, SharedData};
 use crate::index::{self, Section};
 use crate::logparse::Severity;
+use crate::newproject;
 use crate::pdf::PdfView;
 use crate::prefs::{self, Change};
 use crate::quickopen;
@@ -49,6 +50,7 @@ pub fn set_accels(app: &adw::Application) {
         ("window.close", &["<Ctrl><Shift>w"]),
         ("app.quit", &["<Ctrl>q"]),
         ("app.preferences", &["<Ctrl>comma"]),
+        ("app.new-project", &["<Ctrl><Shift>n"]),
         ("app.shortcuts", &["<Ctrl>question", "<Ctrl><Shift>question"]),
     ];
     for (action, keys) in accels {
@@ -98,6 +100,16 @@ pub fn setup_app_actions(app: &adw::Application) {
         prefs::show(&win, move |change| apply_change(&app2, change));
     });
     app.add_action(&preferences);
+
+    let new_project = gio::SimpleAction::new("new-project", None);
+    let weak = app.downgrade();
+    new_project.connect_activate(move |_, _| {
+        let Some(app) = weak.upgrade() else { return };
+        let Some(win) = app.active_window() else { return };
+        let a = app.clone();
+        newproject::show(&win, move |root| open_project(&a, &root, false));
+    });
+    app.add_action(&new_project);
 
     let shortcuts = gio::SimpleAction::new("shortcuts", None);
     let weak = app.downgrade();
@@ -211,55 +223,91 @@ fn show_welcome(app: &adw::Application) {
         w.present();
         return;
     }
-    let window = adw::ApplicationWindow::builder().application(app).title("rutex").default_width(640).default_height(620).build();
+    let window = adw::ApplicationWindow::builder().application(app).title("rutex").default_width(720).default_height(680).build();
 
-    let open = gtk::Button::builder().label("Abrir proyecto…").css_classes(["pill", "suggested-action"]).build();
-    let new = gtk::Button::builder().label("Nuevo proyecto…").css_classes(["pill"]).build();
-    let buttons = gtk::Box::builder().spacing(12).halign(gtk::Align::Center).build();
-    buttons.append(&open);
-    buttons.append(&new);
+    // Cabecera con el logo.
+    let logo = gtk::Image::builder().icon_name("dev.fran.Rutex").pixel_size(72).build();
+    let title = gtk::Label::builder().label("rutex").xalign(0.0).css_classes(["title-1"]).build();
+    let subtitle = gtk::Label::builder().label("Editor LaTeX con compilación automática").xalign(0.0).css_classes(["dim-label"]).build();
+    let titles = gtk::Box::builder().orientation(gtk::Orientation::Vertical).valign(gtk::Align::Center).spacing(2).build();
+    titles.append(&title);
+    titles.append(&subtitle);
+    let hero = gtk::Box::builder().spacing(18).build();
+    hero.append(&logo);
+    hero.append(&titles);
 
-    let content = gtk::Box::builder().orientation(gtk::Orientation::Vertical).spacing(24).build();
-    content.append(&buttons);
+    // Dos acciones grandes.
+    let action_card = |icon: &str, heading: &str, detail: &str| {
+        let b = gtk::Box::builder().orientation(gtk::Orientation::Vertical).spacing(6).margin_top(14).margin_bottom(14).margin_start(14).margin_end(14).build();
+        b.append(&gtk::Image::builder().icon_name(icon).pixel_size(28).halign(gtk::Align::Start).css_classes(["accent"]).build());
+        b.append(&gtk::Label::builder().label(heading).xalign(0.0).css_classes(["heading"]).build());
+        b.append(&gtk::Label::builder().label(detail).xalign(0.0).wrap(true).css_classes(["dim-label", "caption"]).build());
+        gtk::Button::builder().child(&b).hexpand(true).css_classes(["card", "welcome-action"]).build()
+    };
+    let new = action_card("document-new-symbolic", "Nuevo proyecto", "Desde una plantilla: artículo, TFM, apuntes, presentación…");
+    new.set_action_name(Some("app.new-project"));
+    let open = action_card("folder-open-symbolic", "Abrir carpeta", "Un proyecto LaTeX que ya tengas");
+    let actions = gtk::Box::builder().spacing(12).homogeneous(true).build();
+    actions.append(&new);
+    actions.append(&open);
+
+    let content = gtk::Box::builder().orientation(gtk::Orientation::Vertical).spacing(28).margin_top(24).margin_bottom(32).margin_start(24).margin_end(24).build();
+    content.append(&hero);
+    content.append(&actions);
 
     let recent = config::get().recent;
     if !recent.is_empty() {
-        let list = gtk::ListBox::builder().css_classes(["boxed-list"]).selection_mode(gtk::SelectionMode::None).build();
+        let group = adw::PreferencesGroup::builder().title("Recientes").build();
         for path in &recent {
             let row = adw::ActionRow::builder()
                 .title(glib::markup_escape_text(&path.file_name().unwrap_or_default().to_string_lossy()))
-                .subtitle(glib::markup_escape_text(&path.display().to_string()))
+                .subtitle(glib::markup_escape_text(&tilde(path)))
                 .activatable(true)
                 .build();
-            row.add_suffix(&gtk::Image::from_icon_name("go-next-symbolic"));
-            let app = app.clone();
-            let path = path.clone();
-            row.connect_activated(move |_| open_project(&app, &path, false));
-            list.append(&row);
+            row.add_prefix(&gtk::Image::from_icon_name("folder-symbolic"));
+            let forget = gtk::Button::builder().icon_name("window-close-symbolic").valign(gtk::Align::Center).tooltip_text("Quitar de recientes").css_classes(["flat", "circular"]).build();
+            row.add_suffix(&forget);
+            let (a, p) = (app.clone(), path.clone());
+            row.connect_activated(move |_| open_project(&a, &p, false));
+            let (p, r, g) = (path.clone(), row.clone(), group.clone());
+            forget.connect_clicked(move |_| {
+                config::update(|c| c.recent.retain(|x| *x != p));
+                g.remove(&r);
+            });
+            group.add(&row);
         }
-        let clamp = adw::Clamp::builder().maximum_size(480).child(&list).build();
-        content.append(&clamp);
+        content.append(&group);
     }
+    content.append(&gtk::Label::builder().label("Ctrl+, preferencias  ·  Ctrl+? atajos de teclado").css_classes(["dim-label", "caption"]).build());
 
-    let status = adw::StatusPage::builder()
-        .icon_name("accessories-text-editor-symbolic")
-        .title("rutex")
-        .description("Editor LaTeX con compilación automática")
-        .child(&content)
-        .build();
-    let scroller = gtk::ScrolledWindow::builder().child(&status).build();
+    let clamp = adw::Clamp::builder().maximum_size(640).child(&content).build();
+    let scroller = gtk::ScrolledWindow::builder().child(&clamp).hscrollbar_policy(gtk::PolicyType::Never).build();
+    let header = adw::HeaderBar::builder().show_title(false).build();
+    let menu = gio::Menu::new();
+    menu.append_submenu(Some("Tema"), &theme_menu());
+    menu.append(Some("Preferencias"), Some("app.preferences"));
+    menu.append(Some("Atajos de teclado"), Some("app.shortcuts"));
+    header.pack_end(&gtk::MenuButton::builder().icon_name("open-menu-symbolic").menu_model(&menu).build());
     let toolbar = adw::ToolbarView::new();
-    toolbar.add_top_bar(&adw::HeaderBar::new());
+    toolbar.add_top_bar(&header);
     toolbar.set_content(Some(&scroller));
     window.set_content(Some(&toolbar));
 
     let (a, w) = (app.clone(), window.downgrade());
     open.connect_clicked(move |_| pick_folder(&a, w.upgrade().map(|w| w.upcast()).as_ref(), false));
-    let (a, w) = (app.clone(), window.downgrade());
-    new.connect_clicked(move |_| pick_folder(&a, w.upgrade().map(|w| w.upcast()).as_ref(), true));
 
     WELCOME.with(|w| *w.borrow_mut() = Some(window.downgrade()));
     window.present();
+}
+
+fn theme_menu() -> gio::Menu {
+    let themes = gio::Menu::new();
+    for mode in ThemeMode::ALL {
+        let item = gio::MenuItem::new(Some(mode.label()), None);
+        item.set_action_and_target_value(Some("app.theme"), Some(&mode.id().to_variant()));
+        themes.append_item(&item);
+    }
+    themes
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -352,6 +400,7 @@ impl ProjectWindow {
 
         let menu = gio::Menu::new();
         let s1 = gio::Menu::new();
+        s1.append(Some("Nuevo proyecto…"), Some("app.new-project"));
         s1.append(Some("Abrir proyecto…"), Some("win.open"));
         s1.append(Some("Nuevo archivo…"), Some("win.new-file"));
         s1.append(Some("Usar este archivo como principal"), Some("win.set-main"));
@@ -362,13 +411,7 @@ impl ProjectWindow {
         s2.append(Some("Limpiar archivos auxiliares"), Some("win.clean"));
         menu.append_section(None, &s2);
         let s3 = gio::Menu::new();
-        let themes = gio::Menu::new();
-        for mode in ThemeMode::ALL {
-            let item = gio::MenuItem::new(Some(mode.label()), None);
-            item.set_action_and_target_value(Some("app.theme"), Some(&mode.id().to_variant()));
-            themes.append_item(&item);
-        }
-        s3.append_submenu(Some("Tema"), &themes);
+        s3.append_submenu(Some("Tema"), &theme_menu());
         s3.append(Some("Modo Vim"), Some("app.vim"));
         menu.append_section(None, &s3);
         let s4 = gio::Menu::new();

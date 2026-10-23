@@ -166,3 +166,12 @@ tabbar.rutex-tabs tab:selected {
   border-radius: 8px;
   padding: 4px 10px;
 }
+
+/* ---------- Bienvenida ---------- */
+.welcome-action {
+  padding: 0;
+  border-radius: 14px;
+}
+.welcome-action image.accent {
+  color: var(--accent-color);
+}

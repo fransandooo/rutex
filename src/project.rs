@@ -14,25 +14,6 @@ const PREFERRED_MAIN: &[&str] = &[
     "main.tex", "tfm.tex", "tfg.tex", "tesis.tex", "thesis.tex", "memoria.tex", "paper.tex",
 ];
 
-pub const TEMPLATE: &str = r"\documentclass[12pt,a4paper]{article}
-\usepackage[T1]{fontenc}
-\usepackage[spanish]{babel}
-\usepackage{amsmath,amssymb}
-\usepackage{graphicx}
-\usepackage[hidelinks]{hyperref}
-
-\title{Título}
-\author{}
-\date{\today}
-
-\begin{document}
-\maketitle
-
-\section{Introducción}
-Empieza a escribir aquí.
-
-\end{document}
-";
 
 #[derive(Clone, Debug)]
 pub struct Project {
@@ -63,7 +44,8 @@ impl Project {
             if !create {
                 return Err(std::io::Error::other("La carpeta no contiene archivos .tex"));
             }
-            fs::write(root.join("main.tex"), TEMPLATE)?;
+            let title = root.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            crate::templates::write(&crate::templates::TEMPLATES[0], &root, &title)?;
             files = scan(&root);
         }
 
