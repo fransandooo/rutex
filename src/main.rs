@@ -7,6 +7,7 @@ mod index;
 mod keys;
 mod logparse;
 mod pdf;
+mod prefs;
 mod project;
 mod quickopen;
 mod synctex;

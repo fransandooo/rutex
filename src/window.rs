@@ -18,11 +18,10 @@ use crate::completion::{Data, SharedData};
 use crate::index::{self, Section};
 use crate::logparse::Severity;
 use crate::pdf::PdfView;
+use crate::prefs::{self, Change};
 use crate::quickopen;
 use crate::project::Project;
 use crate::synctex;
-
-const AUTOSAVE_DELAY: Duration = Duration::from_millis(800);
 
 thread_local! {
     static PROJECTS: RefCell<Vec<Rc<ProjectWindow>>> = const { RefCell::new(Vec::new()) };
@@ -49,6 +48,8 @@ pub fn set_accels(app: &adw::Application) {
         ("win.close-tab", &["<Ctrl>w"]),
         ("window.close", &["<Ctrl><Shift>w"]),
         ("app.quit", &["<Ctrl>q"]),
+        ("app.preferences", &["<Ctrl>comma"]),
+        ("app.shortcuts", &["<Ctrl>question", "<Ctrl><Shift>question"]),
     ];
     for (action, keys) in accels {
         app.set_accels_for_action(action, keys);
@@ -87,6 +88,48 @@ pub fn setup_app_actions(app: &adw::Application) {
     app.add_action(&theme);
 
     crate::theme::connect_changed(|| for_each_project(|pw| pw.editor.refresh_scheme()));
+
+    let preferences = gio::SimpleAction::new("preferences", None);
+    let weak = app.downgrade();
+    preferences.connect_activate(move |_, _| {
+        let Some(app) = weak.upgrade() else { return };
+        let Some(win) = app.active_window() else { return };
+        let app2 = app.clone();
+        prefs::show(&win, move |change| apply_change(&app2, change));
+    });
+    app.add_action(&preferences);
+
+    let shortcuts = gio::SimpleAction::new("shortcuts", None);
+    let weak = app.downgrade();
+    shortcuts.connect_activate(move |_, _| {
+        if let Some(win) = weak.upgrade().and_then(|a| a.active_window()) {
+            prefs::shortcuts(&win);
+        }
+    });
+    app.add_action(&shortcuts);
+}
+
+/// Aplica en caliente un cambio de las preferencias a todas las ventanas.
+fn apply_change(app: &adw::Application, change: Change) {
+    match change {
+        Change::Theme => {
+            if let Some(action) = app.lookup_action("theme").and_downcast::<gio::SimpleAction>() {
+                action.set_state(&config::get().theme.id().to_variant());
+            }
+            crate::theme::apply();
+        }
+        Change::FontSize(pt) => crate::theme::set_font_size(pt),
+        Change::Wrap(on) => for_each_project(|pw| pw.editor.set_wrap(on)),
+        Change::Autopairs(on) => for_each_project(|pw| pw.editor.set_autopairs(on)),
+        Change::Vim(on) => {
+            if let Some(action) = app.lookup_action("vim").and_downcast::<gio::SimpleAction>() {
+                action.set_state(&on.to_variant());
+            }
+            for_each_project(|pw| pw.editor.set_vim(on));
+        }
+        Change::PdfDark => for_each_project(|pw| pw.pdf.refresh_colors()),
+        Change::Autocompile => {}
+    }
 }
 
 fn for_each_project(f: impl Fn(&Rc<ProjectWindow>)) {
@@ -328,6 +371,10 @@ impl ProjectWindow {
         s3.append_submenu(Some("Tema"), &themes);
         s3.append(Some("Modo Vim"), Some("app.vim"));
         menu.append_section(None, &s3);
+        let s4 = gio::Menu::new();
+        s4.append(Some("Preferencias"), Some("app.preferences"));
+        s4.append(Some("Atajos de teclado"), Some("app.shortcuts"));
+        menu.append_section(None, &s4);
         let menu_btn = gtk::MenuButton::builder().icon_name("open-menu-symbolic").menu_model(&menu).primary(true).tooltip_text("Menú").build();
 
         let compile_btn = gtk::Button::builder()
@@ -794,10 +841,16 @@ impl ProjectWindow {
             id.remove();
         }
         let weak = Rc::downgrade(self);
-        let id = glib::timeout_add_local_once(AUTOSAVE_DELAY, move || {
+        let cfg = config::get();
+        let id = glib::timeout_add_local_once(Duration::from_millis(cfg.compile_delay_ms as u64), move || {
             if let Some(this) = weak.upgrade() {
                 this.autosave.borrow_mut().take();
-                this.save_and_compile();
+                if cfg.autocompile {
+                    this.save_and_compile();
+                } else {
+                    this.save();
+                    this.refresh_index();
+                }
             }
         });
         *self.autosave.borrow_mut() = Some(id);

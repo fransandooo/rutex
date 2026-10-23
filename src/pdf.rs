@@ -238,6 +238,16 @@ impl PdfView {
         let _ = self.tx.try_send(Req::Load { generation, path });
     }
 
+    /// Repinta las páginas (cambio de tema o del modo oscuro del PDF).
+    pub fn refresh_colors(&self) {
+        let st = self.state.borrow();
+        for weak in st.bound.values() {
+            if let Some(da) = weak.upgrade() {
+                da.queue_draw();
+            }
+        }
+    }
+
     /// 1 = acercar, -1 = alejar, 0 = ajustar al ancho.
     pub fn zoom(&self, step: i32) {
         let vadj = self.scrolled.vadjustment();
