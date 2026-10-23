@@ -13,22 +13,45 @@ It is built with GTK4 + libadwaita and made with [Omarchy](https://omarchy.org)
 
 ## Features
 
-- **Live compilation**: when you stop typing (~0.8 s), rutex saves and compiles with
-  `latexmk`. If you keep typing during a build, another build is queued instead of killing
-  the running one, so the `.aux` files are never left corrupted.
-- **Built-in PDF viewer**: only the visible pages are rendered, on a separate thread. The
-  viewer doesn't flicker and keeps your scroll position when it reloads.
+**Writing**
+- **Live compilation**: when you stop typing, rutex saves and compiles with `latexmk`. If you
+  keep typing during a build, another build is queued instead of killing the running one, so
+  `.aux` files are never left corrupted.
+- **Tabs and a file tree**: real folders, plus a right-click menu to create files and
+  folders, rename or move, set the main file, copy the path, show it in the file manager or
+  move it to the trash. Images and PDFs open with the system's default app.
+- **Autocompletion**: commands with tab stops; `\begin{` inserts whole environments (figure,
+  table, align…); `\ref{` completes your labels and `\cite{` your `.bib` keys;
+  `\includegraphics{` completes images and `\input{` completes chapters.
+- **Editing shortcuts**: comment lines, bold and italic, duplicate and move lines,
+  auto-closing `{ [ ( $`, and `\end{…}` inserted when you press Enter after `\begin{…}`.
+- **Outline**: the chapters and sections of the whole document (following `\input`), one
+  click away.
+- **Quick open** (`Ctrl+P`) with fuzzy search over files, or sections with `@`.
+- **Errors where they happen**: lines with errors and warnings are marked in the editor, and
+  the problems panel opens the file at the right line.
+- **Word count** of the whole document in the status bar.
+- **Optional Vim mode**.
+
+**Looks**
+- **Follows your Omarchy theme live**: change it with `omarchy-theme-set` and the interface
+  and the editor's syntax colors update immediately. On other desktops it follows the
+  system's light/dark setting.
+- Optional **dark mode for the PDF**, which repaints pages with your theme colors.
+
+**PDF**
+- **Built-in viewer** that renders only the visible pages, on a separate thread. It doesn't
+  flicker and keeps your scroll position when it reloads.
 - **SyncTeX**: double-click the PDF to jump to the source line, and press `Ctrl+J` to jump from
   the source to the PDF.
-- **Errors and warnings panel**: click an entry to open that file at that line.
-- **Multi-file projects**: file tree, `\input`/`\include`, automatic main-file detection, and
-  the `% !TEX root` and `% !TEX program` magic comments.
-- **Automatic engine choice**: pdfLaTeX by default, and XeLaTeX when the document uses
-  `fontspec`, `unicode-math` or `polyglossia`. Your `latexmkrc` is respected.
-- **Clean project folders**: `.aux`, `.log` and other build files go to `~/.cache/rutex/`, not
-  next to your sources.
-- **Optional Vim mode** (menu → *Modo Vim*).
-- **Light and dark themes** that follow the system.
+
+**Projects**
+- **Templates**: article, TFM/thesis (chapters, biblatex + biber), lecture notes, Beamer
+  slides and empty.
+- **Automatic engine choice**: pdfLaTeX by default, XeLaTeX for `fontspec` / `unicode-math` /
+  `polyglossia`. The `% !TEX program` and `% !TEX root` magic comments and your `latexmkrc`
+  are respected.
+- **Clean project folders**: build files go to `~/.cache/rutex/`.
 
 ## Requirements
 
@@ -104,18 +127,25 @@ bindd = SUPER SHIFT, L, LaTeX, exec, omarchy-launch-or-focus dev.fran.Rutex "uws
 
 ## Keyboard shortcuts
 
+Press `Ctrl+?` inside the app to see them all.
+
 | Shortcut | Action |
 |---|---|
 | `Ctrl+S` / `Ctrl+Enter` | Save and compile now |
-| `Ctrl+J` | Jump from source to PDF |
-| Double-click on PDF | Jump from PDF to source |
-| `Ctrl+F` | Find |
-| `Ctrl+E` | Toggle the problems panel |
+| `Ctrl+P` | Quick open (type `@` for sections) |
+| `Ctrl+J` / double-click on PDF | Jump source → PDF / PDF → source |
+| `Ctrl+Z` / `Ctrl+Y` / `Ctrl+Shift+Z` | Undo / redo |
+| `Ctrl+F` / `Ctrl+G` | Find / go to line |
+| `Ctrl+/` | Comment or uncomment lines |
+| `Ctrl+B` / `Ctrl+I` | `\textbf{}` / `\textit{}` |
+| `Ctrl+D` / `Ctrl+Shift+K` / `Alt+↑↓` | Duplicate / delete / move lines |
+| `Ctrl+Space` | Show suggestions |
+| `Ctrl+N` / `Ctrl+Shift+N` | New file / new project |
+| `Ctrl+Shift+E` / `Ctrl+Shift+O` / `F9` | Files / outline / toggle sidebar |
+| `Ctrl+E` | Problems panel |
 | `Ctrl++` / `Ctrl+-` / `Ctrl+0` / `Ctrl+wheel` | PDF zoom |
-| `Ctrl+N` | New file |
-| `Ctrl+O` | Open project |
-| `F9` | Toggle the file sidebar |
-| `Ctrl+W` / `Ctrl+Q` | Close window / quit |
+| `Ctrl+,` | Preferences |
+| `Ctrl+W` / `Ctrl+Shift+W` / `Ctrl+Q` | Close tab / close window / quit |
 
 ## Resource usage and lifecycle
 
@@ -134,7 +164,8 @@ More details (in Spanish) are in [docs/DISENO.md](docs/DISENO.md).
 
 ```bash
 cargo run -- path/to/project
-cargo test
+cargo test                 # unit tests
+cargo test -- --ignored    # also compiles every template (needs TeX Live)
 ```
 
 ## License
