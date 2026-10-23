@@ -630,6 +630,28 @@ impl Editor {
         true
     }
 
+    /// Inserts a math command from the symbol palette: inside a formula as is,
+    /// otherwise wrapped in $…$; the cursor goes into the first {} or between
+    /// a pair of delimiters.
+    pub fn insert_symbol(&self, command: &str) -> bool {
+        let Some(view) = self.current_view() else { return false };
+        let buffer = view.buffer();
+        let offset = buffer.iter_at_mark(&buffer.get_insert()).offset();
+        let (s, e) = buffer.bounds();
+        let in_math = crate::mathpreview::math_at(&buffer.text(&s, &e, false), offset as usize).is_some();
+        let ends_in_letter = command.ends_with(|c: char| c.is_ascii_alphabetic());
+        let body = if in_math && ends_in_letter { format!("{command} ") } else { command.to_string() };
+        let caret = body.find("{}").map(|i| i + 1).or_else(|| body.contains(' ').then(|| body.find(' ').unwrap() + 1).filter(|_| !ends_in_letter)).unwrap_or(body.len());
+        let (text, caret) = if in_math { (body.clone(), caret) } else { (format!("${body}$"), caret + 1) };
+        buffer.begin_user_action();
+        buffer.insert_at_cursor(&text);
+        buffer.end_user_action();
+        let caret_chars = text[..caret.min(text.len())].chars().count() as i32;
+        buffer.place_cursor(&buffer.iter_at_offset(offset + caret_chars));
+        view.grab_focus();
+        true
+    }
+
     /// Inserts a table from a CSV file at the cursor.
     pub fn insert_csv(&self, csv: &str) -> bool {
         let Some(view) = self.current_view() else { return false };

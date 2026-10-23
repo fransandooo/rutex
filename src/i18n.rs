@@ -450,6 +450,16 @@ const TABLE: &[(&str, &str)] = &[
     (" — cite it with {}", " — cítalo con {}"),
     ("No entries found", "No se encontraron entradas"),
     ("Could not write the .bib file: {}", "No se pudo escribir el archivo .bib: {}"),
+    ("Math symbol…", "Símbolo matemático…"),
+    ("Math symbols", "Símbolos matemáticos"),
+    ("Search symbols (arrow, subset, infinity…)", "Buscar símbolos (arrow, subset, infinity…)"),
+    ("Greek letters", "Letras griegas"),
+    ("Operators and functions", "Operadores y funciones"),
+    ("Relations", "Relaciones"),
+    ("Arrows", "Flechas"),
+    ("Sets and logic", "Conjuntos y lógica"),
+    ("Accents and fonts", "Acentos y tipos de letra"),
+    ("Delimiters and dots", "Delimitadores y puntos"),
 ];
 
 #[cfg(test)]

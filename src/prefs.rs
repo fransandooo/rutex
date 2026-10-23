@@ -182,6 +182,7 @@ pub fn shortcuts(parent: &impl IsA<gtk::Widget>) {
                 (tr("Quick open"), "<Control>p"),
                 (tr("Version history"), "<Control><Shift>h"),
                 (tr("Check before submitting"), "<Control><Shift>r"),
+                (tr("Math symbols"), "<Control><Shift>m"),
                 (tr("Save a version"), "<Control><Shift>s"),
                 (tr("New file"), "<Control>n"),
                 (tr("Open project"), "<Control>o"),

@@ -45,6 +45,7 @@ pub fn set_accels(app: &adw::Application) {
         ("win.quick-open", &["<Ctrl>p"]),
         ("win.history", &["<Ctrl><Shift>h"]),
         ("win.check", &["<Ctrl><Shift>r"]),
+        ("win.symbols", &["<Ctrl><Shift>m"]),
         ("win.save-version", &["<Ctrl><Shift>s"]),
         ("win.zoom-in", &["<Ctrl>plus", "<Ctrl>equal", "<Ctrl>KP_Add"]),
         ("win.zoom-out", &["<Ctrl>minus", "<Ctrl>KP_Subtract"]),
@@ -554,6 +555,7 @@ impl ProjectWindow {
         section(tr("Insert"), &[
             (tr("Image…"), "win.insert-image"),
             (tr("Table from CSV…"), "win.insert-csv"),
+            (tr("Math symbol…"), "win.symbols"),
             (tr("Reference from DOI or arXiv…"), "win.add-reference"),
             (tr("Citation from Zotero"), "win.zotero-cite"),
         ]);
@@ -1040,6 +1042,18 @@ impl ProjectWindow {
         add("insert-image", Box::new(|t| t.pick_and_insert(true)));
         add("insert-csv", Box::new(|t| t.pick_and_insert(false)));
         add("add-reference", Box::new(|t| t.add_reference_dialog()));
+        add("symbols", Box::new(|t| {
+            if t.editor.current_view().is_none() {
+                t.toast(tr("Open a .tex file first"));
+                return;
+            }
+            let weak = Rc::downgrade(t);
+            crate::symbols::show(&t.window, move |cmd| {
+                if let Some(this) = weak.upgrade() {
+                    this.editor.insert_symbol(cmd);
+                }
+            });
+        }));
         add("zotero-cite", Box::new(|t| t.zotero_cite()));
         add("save-version", Box::new(|t| t.save_version()));
         add("zoom-in", Box::new(|t| t.pdf.zoom(1)));

@@ -387,3 +387,11 @@ GtkSourceAssistant.completion list row cell.after {
 .math-bubble {
   padding: 6px 4px;
 }
+
+/* ---------- Paleta de símbolos ---------- */
+button.symbol {
+  min-width: 40px;
+  min-height: 36px;
+  font-size: 1.25em;
+  padding: 0 4px;
+}

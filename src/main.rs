@@ -24,6 +24,7 @@ mod quickopen;
 mod refs;
 mod search;
 mod spell;
+mod symbols;
 mod synctex;
 mod tabs;
 mod templates;
