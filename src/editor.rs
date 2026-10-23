@@ -2,7 +2,7 @@
 //! conserva su historial de deshacer y su posición), autoguardado atómico,
 //! búsqueda y modo Vim opcional.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::rc::{Rc, Weak};
@@ -14,6 +14,7 @@ use sourceview5::prelude::*;
 
 use crate::completion::{LatexProvider, SharedData};
 use crate::config;
+use crate::keys;
 
 struct Doc {
     rel: PathBuf,
@@ -36,6 +37,7 @@ pub struct Editor {
     stack: gtk::Stack,
     root: PathBuf,
     completion: LatexProvider,
+    key_options: Rc<keys::Options>,
     docs: RefCell<Vec<Doc>>,
     on_change: Callback,
     on_save: Callback,
@@ -82,6 +84,7 @@ impl Editor {
             stack,
             root,
             completion: LatexProvider::new(data),
+            key_options: Rc::new(keys::Options { autopairs: Cell::new(config::get().autopairs), vim: Cell::new(config::get().vim) }),
             docs: RefCell::default(),
             on_change: RefCell::default(),
             on_save: RefCell::default(),
@@ -237,6 +240,7 @@ impl Editor {
             .tab_width(2)
             .insert_spaces_instead_of_tabs(true)
             .smart_backspace(true)
+            .smart_home_end(sourceview5::SmartHomeEndType::Before)
             .wrap_mode(if cfg.wrap { gtk::WrapMode::WordChar } else { gtk::WrapMode::None })
             .top_margin(10)
             .bottom_margin(240)
@@ -244,6 +248,7 @@ impl Editor {
             .right_margin(16)
             .css_classes(["rutex-editor"])
             .build();
+        keys::install(&view, self.key_options.clone());
         if lang.is_some() {
             let completion = view.completion();
             completion.add_provider(&self.completion);
@@ -377,7 +382,12 @@ impl Editor {
         }
     }
 
+    pub fn set_autopairs(&self, enabled: bool) {
+        self.key_options.autopairs.set(enabled);
+    }
+
     pub fn set_vim(self: &Rc<Self>, enabled: bool) {
+        self.key_options.vim.set(enabled);
         {
             let mut docs = self.docs.borrow_mut();
             for doc in docs.iter_mut() {

@@ -4,6 +4,7 @@ mod config;
 mod editor;
 mod filetree;
 mod index;
+mod keys;
 mod logparse;
 mod pdf;
 mod project;

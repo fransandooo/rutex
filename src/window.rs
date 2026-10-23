@@ -35,6 +35,7 @@ pub fn set_accels(app: &adw::Application) {
         ("win.new-file", &["<Ctrl>n"]),
         ("win.find", &["<Ctrl>f"]),
         ("win.forward-sync", &["<Ctrl>j"]),
+        ("win.goto-line", &["<Ctrl>g"]),
         ("win.zoom-in", &["<Ctrl>plus", "<Ctrl>equal", "<Ctrl>KP_Add"]),
         ("win.zoom-out", &["<Ctrl>minus", "<Ctrl>KP_Subtract"]),
         ("win.zoom-fit", &["<Ctrl>0"]),
@@ -597,6 +598,7 @@ impl ProjectWindow {
         add("open", Box::new(|t| pick_folder(&t.app, Some(t.window.upcast_ref()), false)));
         add("find", Box::new(|t| t.editor.find()));
         add("forward-sync", Box::new(|t| t.forward_sync()));
+        add("goto-line", Box::new(|t| t.goto_line_dialog()));
         add("zoom-in", Box::new(|t| t.pdf.zoom(1)));
         add("zoom-out", Box::new(|t| t.pdf.zoom(-1)));
         add("zoom-fit", Box::new(|t| t.pdf.zoom(0)));
@@ -956,6 +958,23 @@ impl ProjectWindow {
                 None => this.toast("SyncTeX no encontró esa línea en el PDF"),
             }
         });
+    }
+
+    fn goto_line_dialog(self: &Rc<Self>) {
+        let Some(rel) = self.editor.current() else { return };
+        let entry = gtk::Entry::builder().input_purpose(gtk::InputPurpose::Digits).activates_default(true).placeholder_text("Número de línea").build();
+        let dialog = adw::AlertDialog::builder().heading("Ir a la línea").extra_child(&entry).default_response("go").close_response("cancel").build();
+        dialog.add_responses(&[("cancel", "Cancelar"), ("go", "Ir")]);
+        dialog.set_response_appearance("go", adw::ResponseAppearance::Suggested);
+        let weak = Rc::downgrade(self);
+        let input = entry.clone();
+        dialog.connect_response(Some("go"), move |_, _| {
+            if let (Some(this), Ok(line)) = (weak.upgrade(), input.text().trim().parse::<u32>()) {
+                this.goto(&rel, line.max(1));
+            }
+        });
+        dialog.present(Some(&self.window));
+        entry.grab_focus();
     }
 
     fn new_file_dialog(self: &Rc<Self>, dir: &Path) {
