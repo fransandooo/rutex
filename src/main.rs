@@ -29,6 +29,7 @@ mod refs;
 mod search;
 mod spell;
 mod symbols;
+mod sync;
 mod synctex;
 mod tabs;
 mod templates;

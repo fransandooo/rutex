@@ -482,6 +482,7 @@ pub struct ProjectWindow {
     status_icon: gtk::Image,
     status: gtk::Label,
     issues_btn: gtk::ToggleButton,
+    sync_btn: gtk::Button,
     engine_label: gtk::Label,
     words_label: gtk::Label,
     words_popover: gtk::Popover,
@@ -565,6 +566,7 @@ impl ProjectWindow {
             (tr("Quick open"), "win.quick-open"),
             (tr("Check before submitting…"), "win.check"),
             (tr("Version history…"), "win.history"),
+            (tr("Sync with Git"), "win.sync"),
             (tr("Save a version…"), "win.save-version"),
         ]);
         section(tr("PDF"), &[
@@ -607,6 +609,8 @@ impl ProjectWindow {
         let issues_btn = gtk::ToggleButton::builder().child(&status_box).tooltip_text(tr("Problems and output (Ctrl+E)")).css_classes(["flat", "compile-status"]).build();
 
         let history_btn = gtk::Button::builder().icon_name("document-open-recent-symbolic").tooltip_text(tr("Version history (Ctrl+Shift+H)")).action_name("win.history").build();
+        // Only shown for projects in a Git repository with a remote.
+        let sync_btn = gtk::Button::builder().icon_name("emblem-synchronizing-symbolic").tooltip_text(tr("Sync with Git")).action_name("win.sync").visible(false).build();
         header.pack_end(&menu_btn);
         // Its own button: images, tables, symbols and references are easy to find.
         let insert_btn = gtk::MenuButton::builder()
@@ -617,6 +621,7 @@ impl ProjectWindow {
             .build();
         header.pack_start(&insert_btn);
         header.pack_end(&history_btn);
+        header.pack_end(&sync_btn);
         header.pack_end(&compile_btn);
         header.pack_end(&issues_btn);
 
@@ -806,6 +811,7 @@ impl ProjectWindow {
             status_icon,
             status,
             issues_btn,
+            sync_btn,
             engine_label,
             words_label,
             words_popover,
@@ -855,6 +861,7 @@ impl ProjectWindow {
         this.compile();
         this.refresh_index();
         this.refresh_baseline();
+        this.refresh_sync_status();
         this
     }
 
@@ -1016,6 +1023,7 @@ impl ProjectWindow {
             if this.editor.reload_external() {
                 this.compile();
             }
+            this.refresh_sync_status();
         });
 
         let weak = Rc::downgrade(self);
@@ -1091,6 +1099,7 @@ impl ProjectWindow {
         }));
         add("export-pdf", Box::new(|t| t.export_pdf()));
         add("export-docx", Box::new(|t| t.export_docx()));
+        add("sync", Box::new(|t| t.sync()));
         add("fold", Box::new(|t| t.editor.folds().iter().for_each(|f| f.fold_at_cursor())));
         add("unfold", Box::new(|t| t.editor.folds().iter().for_each(|f| f.unfold_at_cursor())));
         add("fold-all", Box::new(|t| t.editor.folds().iter().for_each(|f| f.fold_all())));
@@ -1473,6 +1482,92 @@ impl ProjectWindow {
             }
         });
         *self.autosave.borrow_mut() = Some(id);
+    }
+
+    /// Shows the Sync button when the project is in a Git repository with a
+    /// remote, with what is pending in its tooltip (local only, no network).
+    fn refresh_sync_status(self: &Rc<Self>) {
+        let root = self.project.borrow().root.clone();
+        let weak = Rc::downgrade(self);
+        glib::spawn_future_local(async move {
+            let st = gio::spawn_blocking(move || crate::sync::status(&root)).await.ok().flatten();
+            let Some(this) = weak.upgrade() else { return };
+            let Some(st) = st.filter(|s| s.has_remote) else {
+                this.sync_btn.set_visible(false);
+                return;
+            };
+            let mut parts = vec![tr("Sync with Git").to_string()];
+            if !st.conflicts.is_empty() {
+                parts.push(trf("{} files with conflicts to resolve", &[&st.conflicts.len()]));
+            }
+            if st.changed > 0 {
+                parts.push(trf("{} changed files to send", &[&st.changed]));
+            }
+            if st.behind > 0 {
+                parts.push(trf("{} updates to receive", &[&st.behind]));
+            }
+            this.sync_btn.set_tooltip_text(Some(&parts.join("\n")));
+            this.sync_btn.set_visible(true);
+        });
+    }
+
+    /// Commit, receive the others' changes and send yours (see sync.rs).
+    fn sync(self: &Rc<Self>) {
+        self.save();
+        let root = self.project.borrow().root.clone();
+        if crate::sync::status(&root).is_none() {
+            let dialog = adw::AlertDialog::builder()
+                .heading(tr("This project is not in Git"))
+                .body(tr("To work with others, put the project folder in a Git repository with a remote (for example, create a repository on GitHub and clone it), and open that folder in rutex. Then this button sends and receives changes."))
+                .close_response("close")
+                .build();
+            dialog.add_response("close", tr("Close"));
+            dialog.present(Some(&self.window));
+            return;
+        }
+        self.sync_btn.set_sensitive(false);
+        self.toast(tr("Syncing…"));
+        let weak = Rc::downgrade(self);
+        glib::spawn_future_local(async move {
+            let message = crate::sync::message();
+            let r = root.clone();
+            let result = gio::spawn_blocking(move || crate::sync::sync(&r, &message)).await.unwrap_or_else(|_| Err("thread".into()));
+            let Some(this) = weak.upgrade() else { return };
+            this.sync_btn.set_sensitive(true);
+            // Files may have changed on disk: show them and rebuild.
+            this.refresh_files();
+            if this.editor.reload_external() {
+                this.compile();
+            }
+            this.refresh_sync_status();
+            match result {
+                Ok(crate::sync::Outcome::Synced { received: 0, sent: 0 }) => this.toast(tr("Already up to date")),
+                Ok(crate::sync::Outcome::Synced { received, sent }) => this.toast(&trf("Synced: {} received, {} sent", &[&received, &sent])),
+                Ok(crate::sync::Outcome::Conflicts(files)) => {
+                    let names: Vec<String> = files.iter().map(|f| f.strip_prefix(&root).unwrap_or(f).display().to_string()).collect();
+                    let dialog = adw::AlertDialog::builder()
+                        .heading(tr("Someone else changed the same lines"))
+                        .body(trf("Both versions are now in {}, between the lines <<<<<<<, ======= and >>>>>>>. Keep the text you want, delete those marker lines, and press Sync again.", &[&names.join(", ")]))
+                        .close_response("close")
+                        .build();
+                    dialog.add_responses(&[("close", tr("Close")), ("open", tr("Show me"))]);
+                    dialog.set_response_appearance("open", adw::ResponseAppearance::Suggested);
+                    let (weak, first) = (Rc::downgrade(&this), files.first().cloned());
+                    dialog.connect_response(Some("open"), move |_, _| {
+                        let (Some(this), Some(file)) = (weak.upgrade(), first.clone()) else { return };
+                        let Ok(rel) = file.strip_prefix(&this.project.borrow().root.clone()).map(Path::to_path_buf) else { return };
+                        let line = fs::read_to_string(&file).ok().and_then(|t| t.lines().position(|l| l.starts_with("<<<<<<< "))).unwrap_or(0);
+                        this.goto(&rel, line as u32 + 1);
+                    });
+                    dialog.present(Some(&this.window));
+                }
+                Err(e) => {
+                    let dialog = adw::AlertDialog::builder().heading(tr("Could not sync")).body(e).close_response("close").build();
+                    dialog.add_response("close", tr("Close"));
+                    dialog.present(Some(&this.window));
+                }
+            }
+        });
     }
 
     /// Word copy of the document for people who review in Word (see export.rs).
