@@ -180,6 +180,8 @@ pub fn shortcuts(parent: &impl IsA<gtk::Widget>) {
                 (tr("Save and compile"), "<Control>s"),
                 (tr("Compile now"), "<Control>Return"),
                 (tr("Quick open"), "<Control>p"),
+                (tr("Version history"), "<Control><Shift>h"),
+                (tr("Save a version"), "<Control><Shift>s"),
                 (tr("New file"), "<Control>n"),
                 (tr("Open project"), "<Control>o"),
                 (tr("Show files"), "<Control><Shift>e"),

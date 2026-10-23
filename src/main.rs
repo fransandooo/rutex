@@ -4,6 +4,8 @@ mod config;
 mod demo;
 mod editor;
 mod filetree;
+mod history;
+mod historyview;
 mod hover;
 mod i18n;
 mod index;

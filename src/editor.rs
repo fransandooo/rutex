@@ -574,6 +574,14 @@ impl Editor {
         Self::emit(&self.on_switch);
     }
 
+    /// Closes the tabs of files that no longer exist (e.g. after restoring a version).
+    pub fn forget_missing(&self) {
+        let gone: Vec<PathBuf> = self.docs.borrow().iter().filter(|d| !self.root.join(&d.rel).exists()).map(|d| d.rel.clone()).collect();
+        for rel in gone {
+            self.forget(&rel);
+        }
+    }
+
     /// Un archivo (o carpeta) se ha borrado: cierra sus pestañas sin guardar.
     pub fn forget(&self, path: &Path) {
         let pages: Vec<adw::TabPage> = {

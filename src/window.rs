@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use adw::prelude::*;
@@ -15,6 +16,7 @@ use crate::config::{self, ThemeMode};
 use crate::demo;
 use crate::editor::Editor;
 use crate::filetree::FileTree;
+use crate::history::History;
 use crate::completion::{Data, SharedData};
 use crate::index::{self, Section};
 use crate::logparse::Severity;
@@ -41,6 +43,8 @@ pub fn set_accels(app: &adw::Application) {
         ("win.forward-sync", &["<Ctrl>j"]),
         ("win.goto-line", &["<Ctrl>g"]),
         ("win.quick-open", &["<Ctrl>p"]),
+        ("win.history", &["<Ctrl><Shift>h"]),
+        ("win.save-version", &["<Ctrl><Shift>s"]),
         ("win.zoom-in", &["<Ctrl>plus", "<Ctrl>equal", "<Ctrl>KP_Add"]),
         ("win.zoom-out", &["<Ctrl>minus", "<Ctrl>KP_Subtract"]),
         ("win.zoom-fit", &["<Ctrl>0"]),
@@ -443,6 +447,8 @@ pub struct ProjectWindow {
     editor_col: gtk::Box,
     /// Modo «PDF en grande»: guarda si la barra lateral estaba visible.
     pdf_full: Cell<Option<bool>>,
+    /// Local version history (None if git is not installed).
+    history: Option<Arc<History>>,
 }
 
 impl ProjectWindow {
@@ -479,6 +485,8 @@ impl ProjectWindow {
         s1.append(Some(tr("Use this file as main")), Some("win.set-main"));
         menu.append_section(None, &s1);
         let s2 = gio::Menu::new();
+        s2.append(Some(tr("Version history…")), Some("win.history"));
+        s2.append(Some(tr("Save a version…")), Some("win.save-version"));
         s2.append(Some(tr("Save PDF to the project folder")), Some("win.export-pdf"));
         s2.append(Some(tr("Open PDF in external viewer")), Some("win.open-pdf"));
         s2.append(Some(tr("Clean auxiliary files")), Some("win.clean"));
@@ -634,6 +642,7 @@ impl ProjectWindow {
         toolbar.set_content(Some(&toasts));
         toolbar.set_top_bar_style(adw::ToolbarStyle::Flat);
 
+        let history = crate::history::git_available().then(|| Arc::new(History::for_project(&project.root, &project.build_dir)));
         let window = adw::ApplicationWindow::builder()
             .application(app)
             .title(format!("{} — rutex", project.name()))
@@ -674,6 +683,7 @@ impl ProjectWindow {
             toolbar,
             editor_col,
             pdf_full: Cell::new(None),
+            history,
         });
 
         this.issues_btn.bind_property("active", &this.issues_revealer, "reveal-child").sync_create().build();
@@ -839,6 +849,10 @@ impl ProjectWindow {
                 if let Some(pid) = this.compile.borrow_mut().pid.take() {
                     compiler::kill(pid);
                 }
+                // A last version when closing (only if something changed; quick).
+                if let Some(h) = &this.history {
+                    let _ = h.snapshot(None);
+                }
                 PROJECTS.with(|p| p.borrow_mut().retain(|pw| !Rc::ptr_eq(pw, &this)));
             }
             glib::Propagation::Proceed
@@ -865,6 +879,8 @@ impl ProjectWindow {
         add("forward-sync", Box::new(|t| t.forward_sync()));
         add("goto-line", Box::new(|t| t.goto_line_dialog()));
         add("quick-open", Box::new(|t| t.quick_open()));
+        add("history", Box::new(|t| t.show_history()));
+        add("save-version", Box::new(|t| t.save_version()));
         add("zoom-in", Box::new(|t| t.pdf.zoom(1)));
         add("zoom-out", Box::new(|t| t.pdf.zoom(-1)));
         add("zoom-fit", Box::new(|t| t.pdf.zoom(0)));
@@ -1184,6 +1200,9 @@ impl ProjectWindow {
         self.editor.set_issues(marks);
         if outcome.pdf.is_some() {
             self.update_word_count();
+            if errors == 0 {
+                self.auto_snapshot();
+            }
         }
         *self.issues.borrow_mut() = shown;
         self.output.buffer().set_text(&outcome.output);
@@ -1305,6 +1324,55 @@ impl ProjectWindow {
                 Some(pos) => this.pdf.reveal(pos),
                 None => this.toast(tr("SyncTeX could not find that line in the PDF")),
             }
+        });
+    }
+
+    /// Automatic version after a good build, at most every 5 minutes.
+    fn auto_snapshot(&self) {
+        let Some(h) = self.history.clone() else { return };
+        glib::spawn_future_local(async move {
+            let _ = gio::spawn_blocking(move || {
+                if h.age_of_last().is_none_or(|age| age >= 300) {
+                    let _ = h.snapshot(None);
+                }
+            })
+            .await;
+        });
+    }
+
+    fn show_history(self: &Rc<Self>) {
+        let Some(h) = self.history.clone() else {
+            self.toast(tr("Install git to use the version history"));
+            return;
+        };
+        self.save();
+        let weak = Rc::downgrade(self);
+        crate::historyview::show(&self.window, h, move || {
+            let Some(this) = weak.upgrade() else { return };
+            this.editor.reload_external();
+            this.editor.forget_missing();
+            this.refresh_files();
+            this.compile();
+            this.toast(tr("Version restored. Your previous state is saved in the history."));
+        });
+    }
+
+    fn save_version(self: &Rc<Self>) {
+        let Some(h) = self.history.clone() else {
+            self.toast(tr("Install git to use the version history"));
+            return;
+        };
+        self.save();
+        let weak = Rc::downgrade(self);
+        crate::historyview::ask_name(&self.window, move |name| {
+            let h = h.clone();
+            let weak = weak.clone();
+            glib::spawn_future_local(async move {
+                let saved = gio::spawn_blocking(move || h.snapshot(Some(&name))).await;
+                if let (Some(this), Ok(Ok(_))) = (weak.upgrade(), saved) {
+                    this.toast(tr("Version saved"));
+                }
+            });
         });
     }
 
