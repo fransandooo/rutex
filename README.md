@@ -1,88 +1,142 @@
 # rutex
 
-Editor LaTeX nativo para Linux, escrito en Rust. Ofrece lo cómodo de Overleaf (abres el
-proyecto, escribes, se compila solo y ves el PDF al lado) sin pagar, sin límite de
-proyectos, sin Docker y sin dejar procesos en segundo plano.
+A fast, native LaTeX editor for Linux, written in Rust.
 
-Pensado para [Omarchy](https://omarchy.org) (Arch + Hyprland), pero funciona en cualquier
-escritorio Linux con GTK4.
+rutex gives you the comfortable parts of Overleaf (open a project, type, and the PDF updates
+next to your code) without a subscription, without project limits, without Docker and
+without leaving anything running in the background.
 
-## Qué hace
+It is built with GTK4 + libadwaita and made with [Omarchy](https://omarchy.org)
+(Arch + Hyprland) in mind, but it runs on any modern Linux desktop.
 
-- **Compilación automática**: al dejar de escribir (~0,8 s) guarda y compila con `latexmk`.
-  Si escribes mientras compila, encola otra compilación en vez de interrumpirla.
-- **Visor PDF integrado**: renderiza solo las páginas visibles en un hilo aparte. Al
-  recompilar no parpadea y conserva el scroll.
-- **SyncTeX**: doble clic en el PDF salta a la línea del código, y `Ctrl+J` salta del código
-  al PDF.
-- **Panel de errores y avisos**: haz clic en uno para ir al archivo y la línea.
-- **Proyectos con varios archivos**: árbol de archivos, `\input`/`\include`, detección del
-  archivo principal y comentarios mágicos `% !TEX root` y `% !TEX program`.
-- **Motor automático**: pdfLaTeX por defecto y XeLaTeX si usas `fontspec`, `unicode-math` o
-  `polyglossia`. Respeta tu `latexmkrc`.
-- **Carpeta limpia**: los `.aux`, `.log`, etc. van a `~/.cache/rutex/`, no a tu proyecto.
-- **Modo Vim** opcional (menú → Modo Vim).
-- **Tema claro/oscuro** según el sistema.
+> **Note:** the interface is currently in Spanish. An English translation is planned.
 
-## Instalación
+## Features
+
+- **Live compilation**: when you stop typing (~0.8 s), rutex saves and compiles with
+  `latexmk`. If you keep typing during a build, another build is queued instead of killing
+  the running one, so the `.aux` files are never left corrupted.
+- **Built-in PDF viewer**: only the visible pages are rendered, on a separate thread. The
+  viewer doesn't flicker and keeps your scroll position when it reloads.
+- **SyncTeX**: double-click the PDF to jump to the source line, and press `Ctrl+J` to jump from
+  the source to the PDF.
+- **Errors and warnings panel**: click an entry to open that file at that line.
+- **Multi-file projects**: file tree, `\input`/`\include`, automatic main-file detection, and
+  the `% !TEX root` and `% !TEX program` magic comments.
+- **Automatic engine choice**: pdfLaTeX by default, and XeLaTeX when the document uses
+  `fontspec`, `unicode-math` or `polyglossia`. Your `latexmkrc` is respected.
+- **Clean project folders**: `.aux`, `.log` and other build files go to `~/.cache/rutex/`, not
+  next to your sources.
+- **Optional Vim mode** (menu → *Modo Vim*).
+- **Light and dark themes** that follow the system.
+
+## Requirements
+
+| Component | Minimum version |
+|---|---|
+| GTK | 4.14 |
+| libadwaita | 1.5 |
+| GtkSourceView | 5.4 |
+| Poppler (glib) | 0.82 |
+| TeX distribution | TeX Live with `latexmk` and `synctex` |
+| Rust (to build) | 1.85 (edition 2024), via [rustup](https://rustup.rs) |
+
+### Arch Linux / Omarchy
 
 ```bash
-# 1. TeX Live (una vez)
-sudo pacman -S --needed texlive-basic texlive-latex texlive-latexrecommended \
-  texlive-latexextra texlive-fontsrecommended texlive-bibtexextra texlive-mathscience \
-  texlive-langspanish texlive-binextra texlive-xetex texlive-luatex biber
+sudo pacman -S --needed gtk4 libadwaita gtksourceview5 poppler-glib \
+  texlive-basic texlive-latex texlive-latexrecommended texlive-latexextra \
+  texlive-fontsrecommended texlive-bibtexextra texlive-mathscience texlive-binextra \
+  texlive-xetex texlive-luatex biber
+# Optional, for Spanish documents: texlive-langspanish
+```
 
-# 2. rutex (en ~/.local, sin sudo)
+### Fedora
+
+```bash
+sudo dnf install gtk4-devel libadwaita-devel gtksourceview5-devel poppler-glib-devel \
+  texlive-scheme-medium latexmk biber
+```
+
+### Debian / Ubuntu (24.04 or newer)
+
+```bash
+sudo apt install build-essential libgtk-4-dev libadwaita-1-dev libgtksourceview-5-dev \
+  libpoppler-glib-dev texlive-latex-extra texlive-fonts-recommended texlive-xetex \
+  texlive-luatex texlive-bibtex-extra latexmk biber
+```
+
+## Install
+
+```bash
+git clone https://github.com/fransandooo/rutex.git
+cd rutex
 ./install.sh
 ```
 
-Aparece en el lanzador (Super+Espacio) como **rutex**. También puedes abrirlo desde la
-terminal: `rutex ~/tfm` o `rutex capitulo.tex`.
+This builds rutex in release mode and installs it into `~/.local`, so `sudo` isn't needed:
 
-Si quieres un atajo en Hyprland, añádelo a `~/.config/hypr/bindings.conf`:
+- the binary goes to `~/.local/bin/rutex`;
+- a desktop entry and icon are added, so rutex shows up in your app launcher (on Omarchy,
+  `Super+Space`).
+
+To update, run `git pull && ./install.sh`. To remove rutex, run `./install.sh --uninstall`.
+
+### Usage
+
+Open it from the launcher, or from a terminal:
+
+```bash
+rutex ~/thesis          # open a project folder
+rutex chapter.tex       # open a file (its project is detected)
+```
+
+The welcome screen lets you open a folder or start a new project. A new project gets a
+`main.tex` template.
+
+### Hyprland keybinding (optional)
+
+Add this to `~/.config/hypr/bindings.conf`:
 
 ```
 bindd = SUPER SHIFT, L, LaTeX, exec, omarchy-launch-or-focus dev.fran.Rutex "uwsm-app -- rutex"
 ```
 
-Para desinstalarlo: `./install.sh --uninstall`.
+## Keyboard shortcuts
 
-## Atajos
-
-| Atajo | Acción |
+| Shortcut | Action |
 |---|---|
-| `Ctrl+S` / `Ctrl+Intro` | Guardar y compilar ya |
-| `Ctrl+J` | Ir del código al PDF |
-| Doble clic en el PDF | Ir del PDF al código |
-| `Ctrl+F` | Buscar |
-| `Ctrl+E` | Panel de problemas |
-| `Ctrl++` / `Ctrl+-` / `Ctrl+0` / `Ctrl+rueda` | Zoom del PDF |
-| `Ctrl+N` | Nuevo archivo |
-| `Ctrl+O` | Abrir proyecto |
-| `F9` | Mostrar u ocultar archivos |
-| `Ctrl+W` / `Ctrl+Q` | Cerrar ventana / salir |
+| `Ctrl+S` / `Ctrl+Enter` | Save and compile now |
+| `Ctrl+J` | Jump from source to PDF |
+| Double-click on PDF | Jump from PDF to source |
+| `Ctrl+F` | Find |
+| `Ctrl+E` | Toggle the problems panel |
+| `Ctrl++` / `Ctrl+-` / `Ctrl+0` / `Ctrl+wheel` | PDF zoom |
+| `Ctrl+N` | New file |
+| `Ctrl+O` | Open project |
+| `F9` | Toggle the file sidebar |
+| `Ctrl+W` / `Ctrl+Q` | Close window / quit |
 
-## Recursos y ciclo de vida
+## Resource usage and lifecycle
 
-- Es un solo proceso y una sola instancia: abrirlo otra vez enfoca la ventana existente.
-- Cuando no haces nada no usa CPU, porque todo funciona por eventos.
-- Al cerrar la última ventana el proceso termina. Cada compilación va en su propio grupo de
-  procesos con `PR_SET_PDEATHSIG`, así que ni `latexmk` ni `pdflatex` ni `biber` se quedan
-  vivos, aunque rutex se cierre de golpe.
-- La caché de páginas del PDF tiene un límite de 128 MB.
+- rutex is a single process with a single instance: launching it again focuses the existing
+  window.
+- It uses no CPU when idle, because everything is event-driven and nothing polls.
+- Closing the last window ends the process.
+- Every build runs in its own process group with `PR_SET_PDEATHSIG`. Closing a window kills
+  its build, and if rutex crashes the kernel kills `latexmk` with it. At worst, a `pdflatex`
+  or `biber` run that was already in progress finishes on its own.
+- The cache of rendered PDF pages is capped at 128 MB.
 
-Más detalles en [docs/DISENO.md](docs/DISENO.md).
+More details (in Spanish) are in [docs/DISENO.md](docs/DISENO.md).
 
-## Desarrollo
+## Development
 
 ```bash
-cargo run -- ruta/al/proyecto
+cargo run -- path/to/project
 cargo test
 ```
 
-Depende de `gtk4`, `libadwaita`, `gtksourceview5` y `poppler-glib` (en Omarchy ya vienen
-instalados).
+## License
 
-## Licencia
-
-GPL-3.0-or-later (usa Poppler, que es GPL).
+GPL-3.0-or-later. rutex links against Poppler, which is GPL-licensed.
