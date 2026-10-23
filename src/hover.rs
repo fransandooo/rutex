@@ -10,8 +10,15 @@ use gtk::{gio, glib};
 use sourceview5::subclass::prelude::*;
 use crate::i18n::tr;
 
+/// What to show for a position: a widget now, or one that is still being
+/// made (a formula being compiled).
+pub enum Content {
+    Ready(gtk::Widget),
+    Later(Pin<Box<dyn std::future::Future<Output = Option<gtk::Widget>>>>),
+}
+
 /// Builds the bubble for a position in a buffer, or None if there is nothing to show.
-pub type Lookup = Rc<dyn Fn(&sourceview5::Buffer, &gtk::TextIter) -> Option<gtk::Widget>>;
+pub type Lookup = Rc<dyn Fn(&sourceview5::Buffer, &gtk::TextIter) -> Option<Content>>;
 
 mod imp {
     use super::*;
@@ -39,13 +46,26 @@ mod imp {
                 (Some(lookup), Some(iter)) => lookup(&context.buffer(), &iter),
                 _ => None,
             };
-            let found = content.is_some();
-            if let Some(w) = content {
-                display.append(&w);
+            let nothing = || glib::Error::new(gio::IOErrorEnum::NotFound, "nothing to show");
+            match content {
+                Some(Content::Ready(w)) => {
+                    display.append(&w);
+                    Box::pin(async { Ok(()) })
+                }
+                Some(Content::Later(future)) => {
+                    let display = display.clone();
+                    Box::pin(async move {
+                        match future.await {
+                            Some(w) => {
+                                display.append(&w);
+                                Ok(())
+                            }
+                            None => Err(nothing()),
+                        }
+                    })
+                }
+                None => Box::pin(async move { Err(nothing()) }),
             }
-            Box::pin(async move {
-                if found { Ok(()) } else { Err(glib::Error::new(gio::IOErrorEnum::NotFound, "no issues")) }
-            })
         }
     }
 }

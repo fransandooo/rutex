@@ -382,3 +382,8 @@ GtkSourceAssistant.completion list row cell.after {
   margin-left: 18px;
   opacity: 0.6;
 }
+
+/* ---------- Vista previa de fórmulas ---------- */
+.math-bubble {
+  padding: 6px 4px;
+}

@@ -13,6 +13,7 @@ mod i18n;
 mod index;
 mod keys;
 mod logparse;
+mod mathpreview;
 mod missing;
 mod newproject;
 mod pdf;

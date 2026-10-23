@@ -498,6 +498,7 @@ pub struct ProjectWindow {
     pdf_full: Cell<Option<bool>>,
     /// Local version history (None if git is not installed).
     history: Option<Arc<History>>,
+    math: Rc<crate::mathpreview::MathPreview>,
     /// History version the margin change bars compare against.
     baseline: RefCell<Option<String>>,
 }
@@ -752,6 +753,8 @@ impl ProjectWindow {
         toolbar.set_content(Some(&toasts));
         toolbar.set_top_bar_style(adw::ToolbarStyle::Flat);
 
+        let math = crate::mathpreview::MathPreview::new(project.root.clone(), &project.build_dir);
+        editor.set_math_preview(math.clone());
         let history = crate::history::git_available().then(|| Arc::new(History::for_project(&project.root, &project.build_dir)));
         let window = adw::ApplicationWindow::builder()
             .application(app)
@@ -802,6 +805,7 @@ impl ProjectWindow {
             editor_col,
             pdf_full: Cell::new(None),
             history,
+            math,
             baseline: RefCell::default(),
         });
 
@@ -1108,6 +1112,7 @@ impl ProjectWindow {
         let cfg = config::get();
         let p = self.project.borrow();
         let main_src = fs::read_to_string(p.root.join(&p.main)).unwrap_or_default();
+        self.math.set_main(&main_src);
         let wanted = crate::spell::resolve(&cfg.spell_lang, &main_src);
         let used = self.editor.set_spell_language(&wanted);
         match (cfg.spellcheck, used) {

@@ -50,6 +50,7 @@ pub struct Editor {
     data: SharedData,
     key_options: Rc<keys::Options>,
     checker: libspelling::Checker,
+    math: RefCell<Option<Rc<crate::mathpreview::MathPreview>>>,
     /// Problemas de la última compilación por archivo: (línea, es_error, mensaje).
     issues: RefCell<HashMap<PathBuf, Vec<(u32, bool, String)>>>,
     error_attrs: sourceview5::MarkAttributes,
@@ -111,6 +112,7 @@ impl Editor {
             error_attrs: sourceview5::MarkAttributes::builder().icon_name("dialog-error-symbolic").build(),
             warning_attrs: sourceview5::MarkAttributes::builder().icon_name("dialog-warning-symbolic").build(),
             checker: libspelling::Checker::default(),
+            math: RefCell::default(),
             key_options: Rc::new(keys::Options { autopairs: Cell::new(config::get().autopairs), vim: Cell::new(config::get().vim) }),
             docs: RefCell::default(),
             on_change: RefCell::default(),
@@ -470,6 +472,32 @@ impl Editor {
         self.color_marks();
     }
 
+    pub fn set_math_preview(&self, math: Rc<crate::mathpreview::MathPreview>) {
+        *self.math.borrow_mut() = Some(math);
+    }
+
+    /// Rendered formula under the mouse (compiled in the background).
+    #[allow(clippy::type_complexity)]
+    fn math_bubble(&self, buffer: &sourceview5::Buffer, iter: &gtk::TextIter) -> Option<std::pin::Pin<Box<dyn std::future::Future<Output = Option<gtk::Widget>>>>> {
+        let math = self.math.borrow().clone()?;
+        if buffer.language().is_none_or(|l| l.id() != "rutex-latex") {
+            return None;
+        }
+        let (s, e) = buffer.bounds();
+        let formula = crate::mathpreview::math_at(&buffer.text(&s, &e, false), iter.offset() as usize)?;
+        let color = match crate::theme::palette() {
+            Some(p) => gtk::gdk::RGBA::parse(&p.fg).unwrap_or(gtk::gdk::RGBA::WHITE),
+            None if adw::StyleManager::default().is_dark() => gtk::gdk::RGBA::WHITE,
+            None => gtk::gdk::RGBA::BLACK,
+        };
+        Some(Box::pin(async move {
+            Some(match math.render(formula, color).await {
+                Ok(texture) => crate::mathpreview::bubble(&texture),
+                Err(msg) => gtk::Label::builder().label(crate::i18n::trf("Could not render the formula: {}", &[&msg])).wrap(true).max_width_chars(60).css_classes(["dim-label", "caption"]).build().upcast(),
+            })
+        }))
+    }
+
     /// Misspelled word under the mouse: suggestions to click, add or ignore.
     fn spell_bubble(&self, buffer: &sourceview5::Buffer, iter: &gtk::TextIter) -> Option<gtk::Widget> {
         let docs = self.docs.borrow();
@@ -592,15 +620,16 @@ impl Editor {
             let line = iter.line() as u32 + 1;
             let issues = this.issues_at(buffer, line).map(|(_, v)| v);
             let reference = this.spell_bubble(buffer, iter).or_else(|| this.reference_bubble(buffer, iter));
+            use crate::hover::Content;
             match (issues, reference) {
-                (None, None) => None,
-                (Some(i), None) => Some(crate::hover::issues_bubble(&i).upcast()),
-                (None, Some(r)) => Some(r),
+                (None, None) => this.math_bubble(buffer, iter).map(Content::Later),
+                (Some(i), None) => Some(Content::Ready(crate::hover::issues_bubble(&i).upcast())),
+                (None, Some(r)) => Some(Content::Ready(r)),
                 (Some(i), Some(r)) => {
                     let b = gtk::Box::builder().orientation(gtk::Orientation::Vertical).spacing(10).build();
                     b.append(&r);
                     b.append(&crate::hover::issues_bubble(&i));
-                    Some(b.upcast())
+                    Some(Content::Ready(b.upcast()))
                 }
             }
         });

@@ -422,6 +422,7 @@ const TABLE: &[(&str, &str)] = &[
     ("No suggestions", "Sin sugerencias"),
     ("Add to dictionary", "Añadir al diccionario"),
     ("Ignore", "Ignorar"),
+    ("Could not render the formula: {}", "No se pudo dibujar la fórmula: {}"),
 ];
 
 #[cfg(test)]
