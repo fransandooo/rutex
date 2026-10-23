@@ -89,7 +89,12 @@ pub fn setup_app_actions(app: &adw::Application) {
     });
     app.add_action(&theme);
 
-    crate::theme::connect_changed(|| for_each_project(|pw| pw.editor.refresh_scheme()));
+    crate::theme::connect_changed(|| {
+        for_each_project(|pw| {
+            pw.editor.refresh_scheme();
+            pw.pdf.refresh_colors();
+        })
+    });
 
     let preferences = gio::SimpleAction::new("preferences", None);
     let weak = app.downgrade();

@@ -23,19 +23,23 @@ const MAX_RENDER_WIDTH: i32 = 6000;
 
 enum Req {
     Load { generation: u64, path: PathBuf },
-    Render { generation: u64, page: usize, width_px: i32 },
+    Render { generation: u64, page: usize, width_px: i32, colors: Colors },
 }
 
 enum Resp {
     Loaded { generation: u64, sizes: Vec<(f64, f64)> },
     Failed { generation: u64, error: String },
-    Rendered { generation: u64, page: usize, width: i32, height: i32, stride: i32, data: Vec<u8> },
+    Rendered { generation: u64, page: usize, width: i32, height: i32, stride: i32, data: Vec<u8>, colors: Colors },
 }
 
 type InverseCallback = RefCell<Option<Box<dyn Fn(PdfPos)>>>;
 
+/// Colores del modo oscuro (fondo, texto) en RGB, o `None` para el PDF original.
+type Colors = Option<[u8; 6]>;
+
 struct Cached {
     generation: u64,
+    colors: Colors,
     width: i32,
     height: i32,
     surface: cairo::ImageSurface,
@@ -59,6 +63,7 @@ struct State {
     bound: HashMap<usize, glib::WeakRef<gtk::DrawingArea>>,
     requested: HashSet<(usize, i32, u64)>,
     marker: Option<(usize, f64)>,
+    colors: Colors,
     marker_timeout: Option<glib::SourceId>,
 }
 
@@ -94,6 +99,7 @@ pub struct PdfView {
     list: gtk::ListView,
     model: gtk::StringList,
     zoom_label: gtk::Label,
+    page_label: gtk::Label,
     state: RefCell<State>,
     tx: async_channel::Sender<Req>,
     on_inverse: InverseCallback,
@@ -129,6 +135,7 @@ impl PdfView {
         stack.set_visible_child_name("empty");
 
         let zoom_label = gtk::Label::builder().label("100%").width_chars(5).build();
+        let page_label = gtk::Label::builder().label("–").width_chars(7).css_classes(["numeric"]).build();
         let zoom_out = gtk::Button::builder().icon_name("zoom-out-symbolic").tooltip_text("Alejar (Ctrl+-)").build();
         let zoom_in = gtk::Button::builder().icon_name("zoom-in-symbolic").tooltip_text("Acercar (Ctrl++)").build();
         let fit = gtk::Button::builder().icon_name("zoom-fit-best-symbolic").tooltip_text("Ajustar al ancho (Ctrl+0)").build();
@@ -141,6 +148,8 @@ impl PdfView {
             .margin_bottom(18)
             .css_classes(["osd", "toolbar", "pdf-controls"])
             .build();
+        controls.append(&page_label);
+        controls.append(&gtk::Separator::new(gtk::Orientation::Vertical));
         controls.append(&zoom_out);
         controls.append(&zoom_label);
         controls.append(&zoom_in);
@@ -157,7 +166,8 @@ impl PdfView {
             list,
             model,
             zoom_label,
-            state: RefCell::new(State { zoom: 1.0, ..Default::default() }),
+            page_label,
+            state: RefCell::new(State { zoom: 1.0, colors: current_colors(), ..Default::default() }),
             tx: req_tx,
             on_inverse: RefCell::default(),
             relayout_queued: std::cell::Cell::new(false),
@@ -191,6 +201,13 @@ impl PdfView {
                     this.relayout();
                 }
             });
+        });
+
+        let weak = Rc::downgrade(&this);
+        this.scrolled.vadjustment().connect_value_changed(move |_| {
+            if let Some(this) = weak.upgrade() {
+                this.update_page_label();
+            }
         });
 
         for (button, step) in [(&zoom_in, 1), (&zoom_out, -1), (&fit, 0)] {
@@ -240,12 +257,35 @@ impl PdfView {
 
     /// Repinta las páginas (cambio de tema o del modo oscuro del PDF).
     pub fn refresh_colors(&self) {
-        let st = self.state.borrow();
+        let mut st = self.state.borrow_mut();
+        st.colors = current_colors();
+        st.requested.clear();
         for weak in st.bound.values() {
             if let Some(da) = weak.upgrade() {
                 da.queue_draw();
             }
         }
+    }
+
+    /// "3 / 12": la página que ocupa el tercio superior de la vista.
+    fn update_page_label(&self) {
+        let st = self.state.borrow();
+        let total = st.sizes.len();
+        if total == 0 {
+            self.page_label.set_label("–");
+            return;
+        }
+        let probe = self.scrolled.vadjustment().page_size() * 0.33;
+        let mut current: Option<usize> = None;
+        for (page, weak) in &st.bound {
+            let Some(da) = weak.upgrade() else { continue };
+            let Some(top) = da.compute_point(&self.scrolled, &graphene::Point::new(0.0, 0.0)) else { continue };
+            if (top.y() as f64) <= probe && current.is_none_or(|c| *page > c) {
+                current = Some(*page);
+            }
+        }
+        let current = current.or_else(|| st.bound.keys().min().copied()).unwrap_or(0);
+        self.page_label.set_label(&format!("{} / {}", current + 1, total));
     }
 
     /// 1 = acercar, -1 = alejar, 0 = ajustar al ancho.
@@ -384,7 +424,10 @@ impl PdfView {
 
     fn draw_page(&self, da: &gtk::DrawingArea, page: usize, cr: &cairo::Context, width: i32, height: i32) {
         let (w, h) = (width as f64, height as f64);
-        cr.set_source_rgb(1.0, 1.0, 1.0);
+        match self.state.borrow().colors {
+            Some(c) => cr.set_source_rgb(c[0] as f64 / 255.0, c[1] as f64 / 255.0, c[2] as f64 / 255.0),
+            None => cr.set_source_rgb(1.0, 1.0, 1.0),
+        }
         cr.paint().ok();
 
         let device_scale = da.native().and_then(|n| n.surface()).map_or(da.scale_factor() as f64, |s| s.scale());
@@ -394,6 +437,7 @@ impl PdfView {
         st.tick += 1;
         let tick = st.tick;
         let shown = st.shown;
+        let colors = st.colors;
         let mut needs_render = true;
         if let Some(c) = st.cache.get_mut(&page) {
             c.used = tick;
@@ -404,7 +448,7 @@ impl PdfView {
                 cr.paint().ok();
             }
             cr.restore().ok();
-            needs_render = c.generation != shown || (c.width - target).abs() > 1;
+            needs_render = c.generation != shown || (c.width - target).abs() > 1 || c.colors != colors;
         }
 
         if let Some((mpage, my)) = st.marker
@@ -416,7 +460,7 @@ impl PdfView {
             }
 
         if needs_render && shown > 0 && st.requested.insert((page, target, shown)) {
-            let _ = self.tx.try_send(Req::Render { generation: shown, page, width_px: target });
+            let _ = self.tx.try_send(Req::Render { generation: shown, page, width_px: target, colors: st.colors });
         }
     }
 
@@ -452,6 +496,7 @@ impl PdfView {
                 }
                 self.relayout();
                 self.stack.set_visible_child_name(if n > 0 { "pdf" } else { "empty" });
+                self.update_page_label();
             }
             Resp::Failed { generation, error } => {
                 if generation == self.state.borrow().generation && !self.has_document() {
@@ -459,7 +504,7 @@ impl PdfView {
                     self.stack.set_visible_child_name("empty");
                 }
             }
-            Resp::Rendered { generation, page, width, height, stride, data } => {
+            Resp::Rendered { generation, page, width, height, stride, data, colors } => {
                 let mut st = self.state.borrow_mut();
                 st.requested.retain(|r| !(r.0 == page && r.2 == generation));
                 if generation != st.shown {
@@ -471,7 +516,7 @@ impl PdfView {
                 };
                 st.tick += 1;
                 let used = st.tick;
-                if let Some(old) = st.cache.insert(page, Cached { generation, width, height, surface, bytes, used }) {
+                if let Some(old) = st.cache.insert(page, Cached { generation, colors, width, height, surface, bytes, used }) {
                     st.cache_bytes -= old.bytes;
                 }
                 st.cache_bytes += bytes;
@@ -531,14 +576,17 @@ fn worker(rx: async_channel::Receiver<Req>, tx: async_channel::Sender<Resp>) {
             continue;
         }
 
-        let Some(Req::Render { generation, page, width_px }) = pending.pop() else { continue };
+        let Some(Req::Render { generation, page, width_px, colors }) = pending.pop() else { continue };
         pending.retain(|r| !matches!(r, Req::Render { page: p, .. } if *p == page));
         let Some((doc_gen, d)) = doc.as_ref() else { continue };
         if *doc_gen != generation {
             continue;
         }
-        if let Some((width, height, stride, data)) = render(d, page, width_px) {
-            let resp = Resp::Rendered { generation, page, width, height, stride, data };
+        if let Some((width, height, stride, mut data)) = render(d, page, width_px) {
+            if let Some(c) = colors {
+                recolor(&mut data, c);
+            }
+            let resp = Resp::Rendered { generation, page, width, height, stride, data, colors };
             if tx.send_blocking(resp).is_err() {
                 return;
             }
@@ -568,4 +616,43 @@ fn render(doc: &poppler::Document, index: usize, width: i32) -> Option<(i32, i32
     let stride = surface.stride();
     let data = surface.data().ok()?.to_vec();
     Some((width, height, stride, data))
+}
+
+/// Modo oscuro: blanco → fondo del tema, negro → texto del tema (como zathura).
+fn recolor(data: &mut [u8], c: [u8; 6]) {
+    let (bg, fg) = ([c[0] as f32, c[1] as f32, c[2] as f32], [c[3] as f32, c[4] as f32, c[5] as f32]);
+    // ARGB32 en memoria little-endian: B, G, R, A (opaco: pintamos fondo blanco).
+    for px in data.chunks_exact_mut(4) {
+        let lum = (0.114 * px[0] as f32 + 0.587 * px[1] as f32 + 0.299 * px[2] as f32) / 255.0;
+        px[2] = (fg[0] + (bg[0] - fg[0]) * lum) as u8;
+        px[1] = (fg[1] + (bg[1] - fg[1]) * lum) as u8;
+        px[0] = (fg[2] + (bg[2] - fg[2]) * lum) as u8;
+    }
+}
+
+/// Colores para el modo oscuro según preferencias y tema actual.
+fn current_colors() -> Colors {
+    if !crate::config::get().pdf_dark {
+        return None;
+    }
+    let (bg, fg) = match crate::theme::palette() {
+        Some(p) => (p.bg, p.fg),
+        None => ("#1e1e1e".to_string(), "#deddda".to_string()),
+    };
+    let parse = |hex: &str, i: usize| u8::from_str_radix(&hex[1 + i * 2..3 + i * 2], 16).unwrap_or(0);
+    Some([parse(&bg, 0), parse(&bg, 1), parse(&bg, 2), parse(&fg, 0), parse(&fg, 1), parse(&fg, 2)])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recolors_white_to_background() {
+        // Un píxel blanco y uno negro (B, G, R, A).
+        let mut data = vec![255, 255, 255, 255, 0, 0, 0, 255];
+        recolor(&mut data, [0x19, 0x18, 0x20, 0xee, 0xcc, 0xa2]);
+        assert_eq!(&data[..3], &[0x20, 0x18, 0x19]);
+        assert_eq!(&data[4..7], &[0xa2, 0xcc, 0xee]);
+    }
 }
