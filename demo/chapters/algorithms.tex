@@ -1,0 +1,53 @@
+\chapter{Algorithms and code}
+\label{chap:algorithms}
+
+\section{Pseudocode}
+
+\Cref{alg:dijkstra} is the shortest-path algorithm by Dijkstra~\cite{dijkstra1959}.
+
+\begin{algorithm}[htbp]
+  \caption{Dijkstra's shortest paths}
+  \label{alg:dijkstra}
+  \begin{algorithmic}[1]
+    \Require graph $G=(V,E)$, weights $w \ge 0$, source $s$
+    \Ensure distances $d[v]$ for every $v \in V$
+    \State $d[v] \gets \infty$ for all $v$; \quad $d[s] \gets 0$
+    \State $Q \gets V$
+    \While{$Q \neq \emptyset$}
+      \State $u \gets \argmin_{v \in Q} d[v]$; \quad $Q \gets Q \setminus \{u\}$
+      \ForAll{$(u,v) \in E$}
+        \If{$d[u] + w(u,v) < d[v]$}
+          \State $d[v] \gets d[u] + w(u,v)$
+        \EndIf
+      \EndFor
+    \EndWhile
+    \State \Return $d$
+  \end{algorithmic}
+\end{algorithm}
+
+\section{Source code}
+
+\Cref{lst:rust} is a simplified version of how \rutex{} launches a build. Every
+build gets its own process group, so nothing is left running when you quit.
+
+\begin{lstlisting}[language=Rust, caption={Spawning latexmk without leaving orphans.}, label={lst:rust}]
+pub fn command(program: &str) -> Command {
+    let mut cmd = Command::new(program);
+    unsafe {
+        cmd.pre_exec(|| {
+            libc::setpgid(0, 0); // own process group
+            libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL);
+            Ok(())
+        });
+    }
+    cmd
+}
+\end{lstlisting}
+
+\begin{lstlisting}[language=Python, caption={The same idea in Python.}, label={lst:python}]
+import os, subprocess
+
+def run(args):
+    # start_new_session puts the child in its own process group
+    return subprocess.Popen(args, start_new_session=True)
+\end{lstlisting}

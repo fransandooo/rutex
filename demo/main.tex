@@ -1,0 +1,42 @@
+% rutex showcase — a tour of what a LaTeX project can do inside rutex.
+% Every chapter is a separate file: open them from the sidebar, the outline
+% (Ctrl+Shift+O) or quick open (Ctrl+P).
+\documentclass[11pt,a4paper,oneside]{report}
+\input{preamble}
+
+\title{%
+  {\Huge\bfseries rutex showcase}\\[1ex]
+  {\Large A tour of a complex \LaTeX{} project}%
+}
+\author{The rutex project}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+  This document is a playground. It mixes chapters in separate files, a
+  bibliography with \texttt{biblatex}, cross-references, TikZ and PGFPlots
+  graphics, circuits, state machines, trees, tables, algorithms, source code and a
+  Gantt chart. Edit anything: rutex saves and recompiles when you stop typing,
+  and the PDF updates next to your code.
+\end{abstract}
+
+\tableofcontents
+\listoffigures
+\listoftables
+
+\input{chapters/introduction}
+\input{chapters/mathematics}
+\input{chapters/figures}
+\input{chapters/tables}
+\input{chapters/algorithms}
+\input{chapters/planning}
+
+\appendix
+\input{chapters/appendix}
+
+\printbibliography[heading=bibintoc]
+
+\end{document}

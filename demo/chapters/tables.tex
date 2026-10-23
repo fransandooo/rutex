@@ -1,0 +1,28 @@
+\chapter{Tables}
+\label{chap:tables}
+
+Good tables use few lines. \Cref{tab:results} uses \texttt{booktabs},
+\texttt{multirow}, and \texttt{siunitx} columns that align numbers on the
+decimal point.
+
+\begin{table}[htbp]
+  \centering
+  \caption{Benchmark results (illustrative).}
+  \label{tab:results}
+  \begin{tabular}{@{} l l S[table-format=2.2] S[table-format=3.1] @{}}
+    \toprule
+    \textbf{Model} & \textbf{Dataset} & {\textbf{Accuracy (\%)}} & {\textbf{Time (s)}} \\
+    \midrule
+    \multirow{2}{*}{Baseline}    & CIFAR-10 & 81.20 & 120.4 \\
+                                 & MNIST    & 97.85 &  35.0 \\
+    \addlinespace
+    \multirow{2}{*}{Transformer} & CIFAR-10 & 92.47 & 410.9 \\
+                                 & MNIST    & 99.31 &  88.2 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\begin{tryit}
+  Click inside the table source and press \texttt{Ctrl+D} to duplicate a row,
+  or \texttt{Alt+Up}/\texttt{Alt+Down} to move it. The PDF follows.
+\end{tryit}

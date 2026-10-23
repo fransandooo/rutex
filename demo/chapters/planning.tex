@@ -1,0 +1,30 @@
+\chapter{Planning}
+\label{chap:planning}
+
+Theses need schedules. \Cref{fig:gantt} is a Gantt chart drawn with
+\texttt{pgfgantt}.
+
+\begin{figure}[htbp]
+  \centering
+  \begin{ganttchart}[
+      hgrid, vgrid, x unit=0.55cm, y unit chart=0.6cm,
+      title label font=\small, bar label font=\small,
+      bar/.append style={fill=RoyalBlue!50},
+      milestone/.append style={fill=BrickRed}]{1}{20}
+    \gantttitle{Weeks}{20} \\
+    \gantttitlelist{1,...,20}{1} \\
+    \ganttbar{Literature review}{1}{5} \\
+    \ganttbar{Methodology}{4}{9} \\
+    \ganttbar{Experiments}{8}{15} \\
+    \ganttmilestone{First results}{12} \\
+    \ganttbar{Writing}{12}{19} \\
+    \ganttmilestone{Submission}{20}
+  \end{ganttchart}
+  \caption{A thesis plan.}
+  \label{fig:gantt}
+\end{figure}
+
+\begin{tryit}
+  Press \texttt{F11} or the fullscreen button in the PDF toolbar to read the
+  document full screen, and the moon button to switch the PDF to dark mode.
+\end{tryit}

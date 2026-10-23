@@ -1,0 +1,60 @@
+\chapter{Mathematics}
+\label{chap:mathematics}
+
+\section{Equations}
+
+The Gaussian integral is a classic:
+\begin{equation}
+  \int_{-\infty}^{\infty} e^{-x^2}\,\mathrm{d}x = \sqrt{\pi}.
+  \label{eq:gauss}
+\end{equation}
+Aligned derivations keep every step readable. Here is the least squares
+solution of $\min_{\beta} \norm{y - X\beta}^2$:
+\begin{align}
+  \hat\beta &= \argmin_{\beta \in \R^p} \norm{y - X\beta}_2^2 \label{eq:ls} \\
+            &= \left(X^\top X\right)^{-1} X^\top y. \nonumber
+\end{align}
+
+Piecewise functions and matrices are just as easy:
+\[
+  f(x) = \begin{cases}
+    x^2        & \text{if } x \ge 0,\\
+    -\sin x    & \text{otherwise,}
+  \end{cases}
+  \qquad
+  R_\theta = \begin{pmatrix}
+    \cos\theta & -\sin\theta \\
+    \sin\theta & \cos\theta
+  \end{pmatrix}.
+\]
+
+\section{Theorems}
+
+\begin{definition}[Metric space]
+  A metric space is a pair $(M, d)$ where $d \colon M \times M \to \R$ is
+  non-negative, symmetric, zero exactly on the diagonal, and satisfies the
+  triangle inequality.
+\end{definition}
+
+\begin{theorem}[Banach fixed point]
+  \label{thm:banach}
+  Let $(M,d)$ be a non-empty complete metric space and $T\colon M\to M$ a
+  contraction. Then $T$ has a unique fixed point $x^\ast$, and for every
+  $x_0 \in M$ the sequence $x_{n+1} = T(x_n)$ converges to $x^\ast$.
+\end{theorem}
+
+\begin{proof}
+  The iterates form a Cauchy sequence, because
+  $d(x_{n+1},x_n) \le q^n d(x_1,x_0)$ with $q<1$. Completeness gives a limit,
+  continuity of $T$ makes it a fixed point, and contractivity makes it unique.
+\end{proof}
+
+\begin{remark}
+  \Cref{thm:banach} and \cref{eq:gauss,eq:ls} are clickable links in the PDF.
+\end{remark}
+
+\section{Units}
+
+With \texttt{siunitx}, quantities are typeset consistently: the speed of light
+is \qty{299792458}{\metre\per\second}, and a laptop GPU draws about
+\qty{60}{\watt} at \qty{1.5}{\giga\hertz}.

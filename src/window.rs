@@ -12,6 +12,7 @@ use gtk::{gio, glib};
 
 use crate::compiler::{self, Outcome};
 use crate::config::{self, ThemeMode};
+use crate::demo;
 use crate::editor::Editor;
 use crate::filetree::FileTree;
 use crate::completion::{Data, SharedData};
@@ -116,6 +117,17 @@ pub fn setup_app_actions(app: &adw::Application) {
         newproject::show(&win, move |root| open_project(&a, &root, false));
     });
     app.add_action(&new_project);
+
+    let open_demo = gio::SimpleAction::new("open-demo", None);
+    let weak = app.downgrade();
+    open_demo.connect_activate(move |_, _| {
+        let Some(app) = weak.upgrade() else { return };
+        match demo::install() {
+            Ok(root) => open_project(&app, &root, false),
+            Err(e) => report_error(&app, &format!("No se pudo preparar la demo: {e}")),
+        }
+    });
+    app.add_action(&open_demo);
 
     let shortcuts = gio::SimpleAction::new("shortcuts", None);
     let weak = app.downgrade();
@@ -256,9 +268,12 @@ fn show_welcome(app: &adw::Application) {
     let new = action_card("document-new-symbolic", "Nuevo proyecto", "Desde una plantilla: artículo, TFM, apuntes, presentación…");
     new.set_action_name(Some("app.new-project"));
     let open = action_card("folder-open-symbolic", "Abrir carpeta", "Un proyecto LaTeX que ya tengas");
+    let demo = action_card("starred-symbolic", "Ver la demo", "Un proyecto completo con figuras, gráficas y bibliografía");
+    demo.set_action_name(Some("app.open-demo"));
     let actions = gtk::Box::builder().spacing(12).homogeneous(true).build();
     actions.append(&new);
     actions.append(&open);
+    actions.append(&demo);
 
     let content = gtk::Box::builder().orientation(gtk::Orientation::Vertical).spacing(28).margin_top(24).margin_bottom(32).margin_start(24).margin_end(24).build();
     content.append(&hero);
@@ -415,6 +430,7 @@ impl ProjectWindow {
         let s1 = gio::Menu::new();
         s1.append(Some("Nuevo proyecto…"), Some("app.new-project"));
         s1.append(Some("Abrir proyecto…"), Some("win.open"));
+        s1.append(Some("Abrir la demo"), Some("app.open-demo"));
         s1.append(Some("Nuevo archivo…"), Some("win.new-file"));
         s1.append(Some("Usar este archivo como principal"), Some("win.set-main"));
         menu.append_section(None, &s1);
@@ -529,11 +545,22 @@ impl ProjectWindow {
 
         let main = gtk::Paned::builder().start_child(&editor_col).end_child(&pdf.widget).shrink_start_child(false).shrink_end_child(false).build();
         // Con Hyprland el tamaño de la ventana lo decide el gestor: repartimos
-        // el espacio la primera vez que sabemos cuánto hay.
-        let placed = Cell::new(false);
+        // el espacio cuando sabemos cuánto hay…
+        // y mantenemos la proporción cuando Hyprland cambia el tamaño de la ventana
+        // (si arrastras el separador, se recuerda tu proporción).
+        let ratio = Rc::new(Cell::new(0.52));
+        let adjusting = Rc::new(Cell::new(false));
+        let (r, a) = (ratio.clone(), adjusting.clone());
         main.connect_max_position_notify(move |paned| {
-            if paned.max_position() > 400 && !placed.replace(true) {
-                paned.set_position((paned.max_position() as f64 * 0.52) as i32);
+            if paned.max_position() > 400 {
+                a.set(true);
+                paned.set_position((paned.max_position() as f64 * r.get()) as i32);
+                a.set(false);
+            }
+        });
+        main.connect_position_notify(move |paned| {
+            if !adjusting.get() && paned.max_position() > 400 {
+                ratio.set((paned.position() as f64 / paned.max_position() as f64).clamp(0.2, 0.8));
             }
         });
 

@@ -1,0 +1,24 @@
+% Diagram in its own file, included with \input from chapters/figures.tex.
+\begin{tikzpicture}[
+    node distance=6mm and 12mm,
+    box/.style={rectangle, rounded corners=3pt, draw=RoyalBlue!70!black, fill=RoyalBlue!10,
+                minimum height=9mm, minimum width=24mm, align=center, font=\small, drop shadow},
+    tool/.style={box, draw=ForestGreen!70!black, fill=ForestGreen!10},
+    arrow/.style={-{Stealth[length=2mm]}, thick, gray!70!black}]
+  \node[box] (edit) {You type};
+  \node[box, right=of edit] (save) {Autosave\\(atomic)};
+  \node[tool, right=of save] (latexmk) {latexmk};
+  \node[box, right=of latexmk] (pdf) {PDF viewer\\(Poppler)};
+  \node[tool, below=of latexmk] (log) {Log parser};
+  \node[box, below=of pdf] (sync) {SyncTeX};
+  \draw[arrow] (edit) -- node[above, font=\scriptsize] {pause} (save);
+  \draw[arrow] (save) -- (latexmk);
+  \draw[arrow] (latexmk) -- (pdf);
+  \draw[arrow] (latexmk) -- (log);
+  \draw[arrow] (pdf) -- (sync);
+  \draw[arrow] (log.west) -| node[below, near start, font=\scriptsize] {error marks} (edit.south);
+  \begin{scope}[on background layer]
+    \node[fit=(save)(latexmk)(log), draw=gray!40, dashed, rounded corners, inner sep=3mm,
+          label={[font=\scriptsize, gray]above:in the background}] {};
+  \end{scope}
+\end{tikzpicture}

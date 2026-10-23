@@ -1,0 +1,47 @@
+\chapter{Welcome to \rutex}
+\label{chap:introduction}
+
+\rutex{} is a native \LaTeX{} editor: you write on the left, and the PDF on the
+right is rebuilt every time you pause. This document is long on purpose. It
+uses many heavy packages, so you can see how the editor behaves on a real
+project like a thesis~\cite{knuth1984,lamport1994}.
+
+\begin{tryit}
+  \begin{itemize}
+    \item \textbf{Live preview}: change this sentence and stop typing. The PDF
+          refreshes on its own and keeps your scroll position.
+    \item \textbf{Jump around}: double-click any paragraph in the PDF to land on
+          its source line, and press \texttt{Ctrl+J} to go from the code to the PDF.
+    \item \textbf{Find things}: \texttt{Ctrl+P} opens files, and typing \texttt{@}
+          there searches sections. \texttt{Ctrl+Shift+O} shows the outline.
+  \end{itemize}
+\end{tryit}
+
+\section{How the project is organised}
+\label{sec:organisation}
+
+The main file only contains the skeleton: the preamble lives in
+\texttt{preamble.tex}, and every chapter is a separate file pulled in with
+\verb|\input|. The outline follows those files in order, so it shows the real
+structure of the document. \Cref{chap:mathematics} covers equations,
+\cref{chap:figures} covers graphics and \cref{chap:planning} covers a Gantt chart.
+
+\section{Autocompletion}
+
+\begin{tryit}
+  On an empty line, type \verb|\begin{fig| and pick \emph{figure}: the whole
+  environment appears, and \texttt{Tab} moves through the gaps. Inside
+  \verb|\cref{| you get every label in the project, and inside \verb|\cite{|
+  every key in \texttt{references.bib}, with its title. Commands from the
+  preamble, such as \verb|\norm| and \verb|\rutex|, are suggested too.
+\end{tryit}
+
+\section{Errors where they happen}
+
+When something goes wrong, the line is marked in the editor. Hover over it to
+read the message, and click the margin icon to open the problems panel.
+
+\begin{tryit}
+  Write \verb|\textbff{oops}| on the next line and wait for the build. Then hover
+  over the red line. Remove it, and the mark disappears with the next build.
+\end{tryit}

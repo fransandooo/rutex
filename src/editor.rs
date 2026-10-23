@@ -257,7 +257,7 @@ impl Editor {
             .smart_home_end(sourceview5::SmartHomeEndType::Before)
             .wrap_mode(if cfg.wrap { gtk::WrapMode::WordChar } else { gtk::WrapMode::None })
             .top_margin(10)
-            .bottom_margin(240)
+            .bottom_margin(24)
             .left_margin(8)
             .right_margin(16)
             .css_classes(["rutex-editor"])

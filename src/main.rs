@@ -1,6 +1,7 @@
 mod compiler;
 mod completion;
 mod config;
+mod demo;
 mod editor;
 mod filetree;
 mod hover;
@@ -26,8 +27,10 @@ const APP_ID: &str = "dev.fran.Rutex";
 const CSS: &str = include_str!("style.css");
 
 fn main() -> glib::ExitCode {
+    // RUTEX_DEV=1 lanza una instancia aparte (útil para probar sin cerrar la instalada).
+    let app_id = if std::env::var_os("RUTEX_DEV").is_some() { format!("{APP_ID}.Devel") } else { APP_ID.to_string() };
     let app = adw::Application::builder()
-        .application_id(APP_ID)
+        .application_id(app_id)
         .flags(gio::ApplicationFlags::HANDLES_OPEN)
         .build();
 

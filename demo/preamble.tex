@@ -1,0 +1,68 @@
+% Packages and custom commands. Commands defined here (\R, \norm, \rutex…)
+% show up in autocompletion.
+\usepackage[T1]{fontenc}
+\usepackage[english]{babel}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{microtype}
+\usepackage{amsmath,amssymb,amsthm,mathtools}
+\usepackage{siunitx}
+\usepackage{graphicx}
+\graphicspath{{figures/}}
+\usepackage{booktabs,multirow,array}
+\usepackage{caption,subcaption}
+\usepackage[dvipsnames]{xcolor}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,shapes.geometric,shapes.misc,calc,fit,backgrounds,shadows,automata}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\usepgfplotslibrary{fillbetween}
+\usepackage{tikz-cd}
+\usepackage[siunitx]{circuitikz}
+\usepackage{forest}
+\usepackage{pgfgantt}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{listings}
+\usepackage[most]{tcolorbox}
+\usepackage{csquotes}
+\usepackage[backend=biber,style=numeric,sorting=none]{biblatex}
+\addbibresource{references.bib}
+\usepackage[colorlinks,linkcolor=RoyalBlue,citecolor=ForestGreen,urlcolor=RoyalBlue]{hyperref}
+\usepackage[capitalise,noabbrev]{cleveref}
+
+% --- Theorems ---
+\theoremstyle{plain}
+\newtheorem{theorem}{Theorem}[chapter]
+\newtheorem{lemma}[theorem]{Lemma}
+\theoremstyle{definition}
+\newtheorem{definition}[theorem]{Definition}
+\theoremstyle{remark}
+\newtheorem*{remark}{Remark}
+
+% --- Custom commands ---
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\N}{\mathbb{N}}
+\newcommand{\norm}[1]{\left\lVert #1 \right\rVert}
+\newcommand{\rutex}{\textsf{rutex}}
+\DeclareMathOperator*{\argmin}{arg\,min}
+
+% --- "Try it" boxes that explain rutex features ---
+\newtcolorbox{tryit}[1][]{
+  enhanced, breakable, colback=RoyalBlue!5, colframe=RoyalBlue!70!black,
+  fonttitle=\bfseries, title={Try it in rutex}, #1
+}
+
+% --- Code listings ---
+\definecolor{codebg}{HTML}{F6F8FA}
+\lstdefinestyle{rutex}{
+  backgroundcolor=\color{codebg}, basicstyle=\ttfamily\small, frame=single,
+  rulecolor=\color{black!15}, numbers=left, numberstyle=\tiny\color{gray},
+  keywordstyle=\color{RoyalBlue}\bfseries, commentstyle=\color{gray}\itshape,
+  stringstyle=\color{ForestGreen}, showstringspaces=false, breaklines=true,
+  tabsize=2, captionpos=b
+}
+\lstset{style=rutex}
+\lstdefinelanguage{Rust}{
+  keywords={fn,let,mut,pub,struct,impl,match,if,else,for,in,return,use,mod,enum,self,Self,async,await,move,loop,while,const,static,where,trait},
+  sensitive=true, comment=[l]{//}, morecomment=[s]{/*}{*/}, string=[b]"
+}

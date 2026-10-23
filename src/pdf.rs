@@ -33,6 +33,8 @@ pub fn shutdown_workers() {
 
 const CACHE_LIMIT: usize = 128 * 1024 * 1024;
 const MARGIN: f64 = 16.0;
+/// Relleno vertical de cada fila de página (ver `.pdf-view > row` en style.css).
+const ROW_PADDING: f64 = 20.0;
 const MAX_RENDER_WIDTH: i32 = 6000;
 
 enum Req {
@@ -339,7 +341,9 @@ impl PdfView {
         }
     }
 
-    /// "3 / 12": la página que ocupa el tercio superior de la vista.
+    /// "3 / 12": la página que ocupa el tercio superior de la vista, calculada
+    /// con las alturas conocidas de las páginas (los widgets de la lista se
+    /// reciclan y su posición no es fiable fuera de pantalla).
     fn update_page_label(&self) {
         let st = self.state.borrow();
         let total = st.sizes.len();
@@ -347,16 +351,18 @@ impl PdfView {
             self.page_label.set_label("–");
             return;
         }
-        let probe = self.scrolled.vadjustment().page_size() * 0.33;
-        let mut current: Option<usize> = None;
-        for (page, weak) in &st.bound {
-            let Some(da) = weak.upgrade() else { continue };
-            let Some(top) = da.compute_point(&self.scrolled, &graphene::Point::new(0.0, 0.0)) else { continue };
-            if (top.y() as f64) <= probe && current.is_none_or(|c| *page > c) {
-                current = Some(*page);
+        let vadj = self.scrolled.vadjustment();
+        let probe = vadj.value() + vadj.page_size() * 0.33;
+        let scale = st.scale();
+        let mut bottom = 0.0;
+        let mut current = total - 1;
+        for (i, (_, h)) in st.sizes.iter().enumerate() {
+            bottom += h * scale + ROW_PADDING;
+            if bottom > probe {
+                current = i;
+                break;
             }
         }
-        let current = current.or_else(|| st.bound.keys().min().copied()).unwrap_or(0);
         self.page_label.set_label(&format!("{} / {}", current + 1, total));
     }
 
