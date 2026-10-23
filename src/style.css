@@ -368,3 +368,17 @@ popover.context-menu separator {
   border-radius: 999px;
   font-weight: 600;
 }
+
+/* ---------- Bocadillos y autocompletado de GtkSourceView ---------- */
+/* Por defecto usan el mismo fondo que el editor y se confunden con él. */
+GtkSourceAssistant {
+  background: var(--popover-bg-color);
+  border: 1px solid color-mix(in srgb, var(--window-fg-color) 22%, transparent);
+  border-radius: 10px;
+  outline: none;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+GtkSourceAssistant.completion list row cell.after {
+  margin-left: 18px;
+  opacity: 0.6;
+}
