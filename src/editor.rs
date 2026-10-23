@@ -619,6 +619,17 @@ impl Editor {
         self.message(&msg);
     }
 
+    /// Inserts text at the cursor of the current .tex file (false if none is open).
+    pub fn insert_at_cursor(&self, text: &str) -> bool {
+        let Some(view) = self.current_view() else { return false };
+        let buffer = view.buffer();
+        buffer.begin_user_action();
+        buffer.insert_at_cursor(text);
+        buffer.end_user_action();
+        view.grab_focus();
+        true
+    }
+
     /// Inserts a table from a CSV file at the cursor.
     pub fn insert_csv(&self, csv: &str) -> bool {
         let Some(view) = self.current_view() else { return false };

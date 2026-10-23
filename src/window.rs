@@ -554,6 +554,8 @@ impl ProjectWindow {
         section(tr("Insert"), &[
             (tr("Image…"), "win.insert-image"),
             (tr("Table from CSV…"), "win.insert-csv"),
+            (tr("Reference from DOI or arXiv…"), "win.add-reference"),
+            (tr("Citation from Zotero"), "win.zotero-cite"),
         ]);
         section(tr("PDF"), &[
             (tr("Fullscreen PDF"), "win.pdf-fullscreen"),
@@ -1037,6 +1039,8 @@ impl ProjectWindow {
         add("check", Box::new(|t| t.show_check()));
         add("insert-image", Box::new(|t| t.pick_and_insert(true)));
         add("insert-csv", Box::new(|t| t.pick_and_insert(false)));
+        add("add-reference", Box::new(|t| t.add_reference_dialog()));
+        add("zotero-cite", Box::new(|t| t.zotero_cite()));
         add("save-version", Box::new(|t| t.save_version()));
         add("zoom-in", Box::new(|t| t.pdf.zoom(1)));
         add("zoom-out", Box::new(|t| t.pdf.zoom(-1)));
@@ -1703,6 +1707,78 @@ impl ProjectWindow {
                 None => this.toast(tr("SyncTeX could not find that line in the PDF")),
             }
         });
+    }
+
+    fn add_reference_dialog(self: &Rc<Self>) {
+        let entry = gtk::Entry::builder().placeholder_text("10.1145/361604.361612 · arXiv:1706.03762").activates_default(true).build();
+        let dialog = adw::AlertDialog::builder()
+            .heading(tr("Add a reference"))
+            .body(tr("Paste a DOI, an arXiv id or a link to either. The entry is added to your .bib and cited at the cursor."))
+            .extra_child(&entry)
+            .default_response("add")
+            .close_response("cancel")
+            .build();
+        dialog.add_responses(&[("cancel", tr("Cancel")), ("add", tr("Add"))]);
+        dialog.set_response_appearance("add", adw::ResponseAppearance::Suggested);
+        let weak = Rc::downgrade(self);
+        let input = entry.clone();
+        dialog.connect_response(Some("add"), move |_, _| {
+            let Some(this) = weak.upgrade() else { return };
+            let Some(ident) = crate::refs::parse_identifier(&input.text()) else {
+                this.toast(tr("That does not look like a DOI or an arXiv id"));
+                return;
+            };
+            this.toast(tr("Looking up the reference…"));
+            let weak = Rc::downgrade(&this);
+            glib::spawn_future_local(async move {
+                let bib = gio::spawn_blocking(move || crate::refs::fetch(&ident)).await.unwrap_or_else(|_| Err("thread".into()));
+                let Some(this) = weak.upgrade() else { return };
+                match bib {
+                    Ok(bib) => this.add_bibtex(&bib),
+                    Err(e) => this.toast(&trf("Could not get the reference: {}", &[&e])),
+                }
+            });
+        });
+        dialog.present(Some(&self.window));
+        entry.grab_focus();
+    }
+
+    fn zotero_cite(self: &Rc<Self>) {
+        self.toast(tr("Pick the references in Zotero…"));
+        let weak = Rc::downgrade(self);
+        glib::spawn_future_local(async move {
+            let bib = gio::spawn_blocking(crate::refs::zotero_cayw).await.unwrap_or_else(|_| Err("thread".into()));
+            let Some(this) = weak.upgrade() else { return };
+            match bib {
+                Ok(bib) if bib.trim().is_empty() => {}
+                Ok(bib) => this.add_bibtex(&bib),
+                Err(_) => this.toast(tr("Could not reach Zotero: open it and install the Better BibTeX add-on")),
+            }
+        });
+    }
+
+    /// Adds BibTeX entries to the project's .bib and cites them at the cursor.
+    fn add_bibtex(self: &Rc<Self>, bibtex: &str) {
+        let p = self.project.borrow().clone();
+        let main_src = fs::read_to_string(p.root.join(&p.main)).unwrap_or_default();
+        let (bib, created) = crate::refs::target_bib(&p.root, &main_src, &p.files);
+        match crate::refs::add_to_bib(&p.root, &bib, bibtex) {
+            Ok(keys) if !keys.is_empty() => {
+                let cite = format!("\\cite{{{}}}", keys.join(", "));
+                let inserted = self.editor.insert_at_cursor(&cite);
+                self.refresh_files();
+                self.refresh_index();
+                let mut msg = trf("Added to {}: {}", &[&bib.display(), &keys.join(", ")]);
+                if created {
+                    msg.push_str(&trf(" — add \\addbibresource{{}} to your preamble", &[&bib.display()]));
+                } else if !inserted {
+                    msg.push_str(&trf(" — cite it with {}", &[&cite]));
+                }
+                self.toast(&msg);
+            }
+            Ok(_) => self.toast(tr("No entries found")),
+            Err(e) => self.toast(&trf("Could not write the .bib file: {}", &[&e])),
+        }
     }
 
     /// File chooser for "Insert image…" / "Insert table from CSV…".

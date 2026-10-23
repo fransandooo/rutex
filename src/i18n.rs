@@ -435,6 +435,21 @@ const TABLE: &[(&str, &str)] = &[
     ("Insert image", "Insertar imagen"),
     ("Insert table from CSV", "Insertar tabla desde CSV"),
     ("That file does not look like a table (same number of columns in every row)", "Ese archivo no parece una tabla (todas las filas con el mismo número de columnas)"),
+    ("Reference from DOI or arXiv…", "Referencia desde DOI o arXiv…"),
+    ("Citation from Zotero", "Cita desde Zotero"),
+    ("Add a reference", "Añadir una referencia"),
+    ("Paste a DOI, an arXiv id or a link to either. The entry is added to your .bib and cited at the cursor.", "Pega un DOI, un identificador de arXiv o un enlace a cualquiera de los dos. La entrada se añade a tu .bib y se cita donde está el cursor."),
+    ("Add", "Añadir"),
+    ("That does not look like a DOI or an arXiv id", "Eso no parece un DOI ni un identificador de arXiv"),
+    ("Looking up the reference…", "Buscando la referencia…"),
+    ("Could not get the reference: {}", "No se pudo obtener la referencia: {}"),
+    ("Pick the references in Zotero…", "Elige las referencias en Zotero…"),
+    ("Could not reach Zotero: open it and install the Better BibTeX add-on", "No se pudo conectar con Zotero: ábrelo e instala el complemento Better BibTeX"),
+    ("Added to {}: {}", "Añadido a {}: {}"),
+    (" — add \\addbibresource{{}} to your preamble", " — añade \\addbibresource{{}} a tu preámbulo"),
+    (" — cite it with {}", " — cítalo con {}"),
+    ("No entries found", "No se encontraron entradas"),
+    ("Could not write the .bib file: {}", "No se pudo escribir el archivo .bib: {}"),
 ];
 
 #[cfg(test)]
