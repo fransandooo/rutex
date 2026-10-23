@@ -53,6 +53,7 @@ pub fn set_accels(app: &adw::Application) {
         ("win.toggle-issues", &["<Ctrl>e"]),
         ("win.show-files", &["<Ctrl><Shift>e"]),
         ("win.show-outline", &["<Ctrl><Shift>o"]),
+        ("win.find-in-project", &["<Ctrl><Shift>f"]),
         ("win.close-tab", &["<Ctrl>w"]),
         ("window.close", &["<Ctrl><Shift>w"]),
         ("app.quit", &["<Ctrl>q"]),
@@ -399,6 +400,17 @@ fn tilde(path: &Path) -> String {
     }
 }
 
+/// Widgets of the "Search" sidebar page.
+struct SearchUi {
+    entry: gtk::SearchEntry,
+    case: gtk::ToggleButton,
+    word: gtk::ToggleButton,
+    replace: gtk::Entry,
+    replace_btn: gtk::Button,
+    summary: gtk::Label,
+    results: gtk::ListBox,
+}
+
 #[derive(Default)]
 struct CompileState {
     running: bool,
@@ -441,6 +453,9 @@ pub struct ProjectWindow {
     data: SharedData,
     index_generation: Cell<u64>,
     outline_list: gtk::ListBox,
+    search: SearchUi,
+    search_hits: RefCell<Vec<Option<crate::search::Hit>>>,
+    search_generation: Cell<u64>,
     sections: adw::ToggleGroup,
     split: adw::OverlaySplitView,
     toolbar: adw::ToolbarView,
@@ -527,6 +542,7 @@ impl ProjectWindow {
         let sections = adw::ToggleGroup::builder().css_classes(["round", "sidebar-switcher"]).homogeneous(true).hexpand(true).build();
         sections.add(adw::Toggle::builder().name("files").label(tr("Files")).build());
         sections.add(adw::Toggle::builder().name("outline").label(tr("Outline")).build());
+        sections.add(adw::Toggle::builder().name("search").label(tr("Search")).build());
         sections.set_active_name(Some("files"));
         let new_file_btn = gtk::Button::builder().icon_name("document-new-symbolic").tooltip_text(tr("New file (Ctrl+N)")).action_name("win.new-file").css_classes(["flat"]).build();
         let new_folder_btn = gtk::Button::builder()
@@ -557,6 +573,30 @@ impl ProjectWindow {
         let sidebar_stack = gtk::Stack::builder().transition_type(gtk::StackTransitionType::Crossfade).vexpand(true).build();
         sidebar_stack.add_named(&files_pane, Some("files"));
         sidebar_stack.add_named(&outline_scroller, Some("outline"));
+
+        // --- Search in the project ---
+        let search_entry = gtk::SearchEntry::builder().placeholder_text(tr("Search in project…")).hexpand(true).build();
+        let case_btn = gtk::ToggleButton::builder().label("Aa").tooltip_text(tr("Match case")).css_classes(["flat"]).build();
+        let word_btn = gtk::ToggleButton::builder().label("W").tooltip_text(tr("Whole word")).css_classes(["flat"]).build();
+        let search_row = gtk::Box::builder().spacing(2).build();
+        search_row.append(&search_entry);
+        search_row.append(&case_btn);
+        search_row.append(&word_btn);
+        let replace_entry = gtk::Entry::builder().placeholder_text(tr("Replace with…")).hexpand(true).build();
+        let replace_btn = gtk::Button::builder().icon_name("edit-find-replace-symbolic").tooltip_text(tr("Replace all (a version is saved first)")).css_classes(["flat"]).sensitive(false).build();
+        let replace_row = gtk::Box::builder().spacing(2).build();
+        replace_row.append(&replace_entry);
+        replace_row.append(&replace_btn);
+        let search_summary = gtk::Label::builder().xalign(0.0).css_classes(["dim-label", "caption"]).build();
+        let search_results = gtk::ListBox::builder().css_classes(["navigation-sidebar", "search-results"]).build();
+        let search_controls = gtk::Box::builder().orientation(gtk::Orientation::Vertical).spacing(6).margin_start(10).margin_end(10).margin_top(4).margin_bottom(4).build();
+        search_controls.append(&search_row);
+        search_controls.append(&replace_row);
+        search_controls.append(&search_summary);
+        let search_pane = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        search_pane.append(&search_controls);
+        search_pane.append(&gtk::ScrolledWindow::builder().child(&search_results).hscrollbar_policy(gtk::PolicyType::Never).vexpand(true).build());
+        sidebar_stack.add_named(&search_pane, Some("search"));
         sections.bind_property("active-name", &sidebar_stack, "visible-child-name").sync_create().build();
 
         let sidebar = gtk::Box::builder().orientation(gtk::Orientation::Vertical).css_classes(["rutex-sidebar"]).build();
@@ -678,6 +718,9 @@ impl ProjectWindow {
             data,
             index_generation: Cell::new(0),
             outline_list,
+            search: SearchUi { entry: search_entry, case: case_btn, word: word_btn, replace: replace_entry, replace_btn, summary: search_summary, results: search_results },
+            search_hits: RefCell::default(),
+            search_generation: Cell::new(0),
             sections,
             split,
             toolbar,
@@ -770,6 +813,8 @@ impl ProjectWindow {
                 }
             }
         });
+
+        self.connect_search();
 
         let weak = Rc::downgrade(self);
         self.outline_list.connect_row_activated(move |_, row| {
@@ -898,6 +943,7 @@ impl ProjectWindow {
         add("clean", Box::new(|t| t.clean()));
         add("show-files", Box::new(|t| t.show_sidebar("files")));
         add("show-outline", Box::new(|t| t.show_sidebar("outline")));
+        add("find-in-project", Box::new(|t| t.find_in_project()));
         add("pdf-fullscreen", Box::new(|t| t.toggle_pdf_fullscreen()));
         add("close-tab", Box::new(|t| t.editor.close_current()));
         add("toggle-issues", Box::new(|t| t.issues_btn.set_active(!t.issues_revealer.reveals_child())));
@@ -1028,6 +1074,170 @@ impl ProjectWindow {
                 self.pdf.set_fullscreen_button(true);
             }
         }
+    }
+
+    fn find_in_project(self: &Rc<Self>) {
+        self.show_sidebar("search");
+        if let Some(view) = self.editor.current_view() {
+            let buffer = view.buffer();
+            if let Some((s, e)) = buffer.selection_bounds()
+                && s.line() == e.line()
+            {
+                self.search.entry.set_text(&buffer.text(&s, &e, false));
+            }
+        }
+        self.search.entry.grab_focus();
+    }
+
+    fn connect_search(self: &Rc<Self>) {
+        let rerun = |this: &Rc<Self>| {
+            let weak = Rc::downgrade(this);
+            move || {
+                if let Some(this) = weak.upgrade() {
+                    this.run_search();
+                }
+            }
+        };
+        let f = rerun(self);
+        self.search.entry.connect_search_changed(move |_| f());
+        let f = rerun(self);
+        self.search.case.connect_toggled(move |_| f());
+        let f = rerun(self);
+        self.search.word.connect_toggled(move |_| f());
+
+        let weak = Rc::downgrade(self);
+        self.search.results.connect_row_activated(move |_, row| {
+            let Some(this) = weak.upgrade() else { return };
+            let hit = this.search_hits.borrow().get(row.index() as usize).cloned().flatten();
+            if let Some(hit) = hit {
+                this.goto(&hit.file, hit.line);
+                if let Some(view) = this.editor.current_view() {
+                    let buffer = view.buffer();
+                    if let Some(start) = buffer.iter_at_line(hit.line as i32 - 1) {
+                        // Select the match (the shown text may start later in the line).
+                        let line_text = {
+                            let mut end = start;
+                            end.forward_to_line_end();
+                            buffer.text(&start, &end, false).to_string()
+                        };
+                        let shown: String = hit.text.chars().take(hit.col + hit.len).collect();
+                        let offset = line_text.find(&shown).map(|b| line_text[..b].chars().count()).unwrap_or(0) + hit.col;
+                        let a = buffer.iter_at_offset(start.offset() + offset as i32);
+                        let b = buffer.iter_at_offset(start.offset() + (offset + hit.len) as i32);
+                        buffer.select_range(&a, &b);
+                    }
+                }
+            }
+        });
+
+        let weak = Rc::downgrade(self);
+        self.search.replace_btn.connect_clicked(move |_| {
+            if let Some(this) = weak.upgrade() {
+                this.replace_in_project();
+            }
+        });
+    }
+
+    fn search_options(&self) -> crate::search::Options {
+        crate::search::Options { case_sensitive: self.search.case.is_active(), whole_word: self.search.word.is_active() }
+    }
+
+    fn run_search(self: &Rc<Self>) {
+        let query = self.search.entry.text().to_string();
+        let generation = self.search_generation.get() + 1;
+        self.search_generation.set(generation);
+        self.search.replace_btn.set_sensitive(!query.is_empty());
+        if query.is_empty() {
+            self.fill_search(&[]);
+            self.search.summary.set_label("");
+            return;
+        }
+        self.save();
+        let p = self.project.borrow().clone();
+        let opts = self.search_options();
+        let weak = Rc::downgrade(self);
+        glib::spawn_future_local(async move {
+            let hits = gio::spawn_blocking(move || crate::search::search(&p.root, &p.files, &query, opts)).await.unwrap_or_default();
+            let Some(this) = weak.upgrade() else { return };
+            if this.search_generation.get() == generation {
+                this.fill_search(&hits);
+            }
+        });
+    }
+
+    fn fill_search(&self, hits: &[crate::search::Hit]) {
+        while let Some(c) = self.search.results.first_child() {
+            self.search.results.remove(&c);
+        }
+        let accent = crate::theme::palette().map(|p| p.accent).unwrap_or_else(|| "#3584e4".into());
+        let mut rows: Vec<Option<crate::search::Hit>> = Vec::new();
+        let mut last_file: Option<&Path> = None;
+        let files = hits.iter().map(|h| &h.file).collect::<std::collections::HashSet<_>>().len();
+        for hit in hits {
+            if last_file != Some(hit.file.as_path()) {
+                last_file = Some(hit.file.as_path());
+                let header = gtk::Box::builder().spacing(6).margin_top(6).build();
+                header.append(&gtk::Image::from_icon_name(crate::editor::file_icon(&hit.file)));
+                header.append(&gtk::Label::builder().label(hit.file.display().to_string()).xalign(0.0).ellipsize(gtk::pango::EllipsizeMode::Start).css_classes(["heading"]).build());
+                let row = gtk::ListBoxRow::builder().child(&header).activatable(false).selectable(false).build();
+                self.search.results.append(&row);
+                rows.push(None);
+            }
+            let chars: Vec<char> = hit.text.chars().collect();
+            let esc = |s: &[char]| glib::markup_escape_text(&s.iter().collect::<String>()).to_string();
+            let end = (hit.col + hit.len).min(chars.len());
+            let lead = chars[..hit.col].iter().take_while(|c| c.is_whitespace()).count();
+            let markup = format!(
+                "<span alpha=\"60%\">{}</span>  {}<span weight=\"bold\" foreground=\"{accent}\">{}</span>{}",
+                hit.line,
+                esc(&chars[lead..hit.col]),
+                esc(&chars[hit.col..end]),
+                esc(&chars[end..]),
+            );
+            let label = gtk::Label::builder().label(markup).use_markup(true).xalign(0.0).ellipsize(gtk::pango::EllipsizeMode::End).build();
+            self.search.results.append(&label);
+            rows.push(Some(hit.clone()));
+        }
+        *self.search_hits.borrow_mut() = rows;
+        self.search.summary.set_label(&if hits.is_empty() {
+            if self.search.entry.text().is_empty() { String::new() } else { tr("No results").to_string() }
+        } else {
+            trf("{} results in {} files", &[&hits.len(), &files])
+        });
+    }
+
+    fn replace_in_project(self: &Rc<Self>) {
+        let query = self.search.entry.text().to_string();
+        if query.is_empty() {
+            return;
+        }
+        let replacement = self.search.replace.text().to_string();
+        self.save();
+        let p = self.project.borrow().clone();
+        let opts = self.search_options();
+        let history = self.history.clone();
+        let label = trf("Before replacing “{}”", &[&query]);
+        let weak = Rc::downgrade(self);
+        glib::spawn_future_local(async move {
+            let result = gio::spawn_blocking(move || {
+                if let Some(h) = &history {
+                    h.snapshot(Some(&label))?;
+                }
+                crate::search::replace_all(&p.root, &p.files, &query, &replacement, opts)
+            })
+            .await;
+            let Some(this) = weak.upgrade() else { return };
+            match result {
+                Ok(Ok((n, files))) => {
+                    this.editor.reload_external();
+                    this.toast(&trf("Replaced {} occurrences in {} files", &[&n, &files]));
+                    this.run_search();
+                    this.compile();
+                }
+                Ok(Err(e)) => this.toast(&trf("Could not replace: {}", &[&e])),
+                Err(_) => {}
+            }
+        });
     }
 
     fn show_sidebar(&self, name: &str) {

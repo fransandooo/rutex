@@ -197,6 +197,7 @@ pub fn shortcuts(parent: &impl IsA<gtk::Widget>) {
                 (tr("Undo"), "<Control>z"),
                 (tr("Redo"), "<Control><Shift>z"),
                 (tr("Find"), "<Control>f"),
+                (tr("Find in project"), "<Control><Shift>f"),
                 (tr("Go to line"), "<Control>g"),
                 (tr("Comment or uncomment"), "<Control>slash"),
                 (tr("Bold (\\textbf)"), "<Control>b"),

@@ -377,6 +377,18 @@ const TABLE: &[(&str, &str)] = &[
     ("Ctrl+click to go there", "Ctrl+clic para ir allí"),
     ("No \\label{{}} in the project", "No hay ningún \\label{{}} en el proyecto"),
     ("{} is not in any .bib file", "{} no está en ningún archivo .bib"),
+    ("Search", "Buscar"),
+    ("Search in project…", "Buscar en el proyecto…"),
+    ("Match case", "Distinguir mayúsculas"),
+    ("Whole word", "Palabra completa"),
+    ("Replace with…", "Reemplazar por…"),
+    ("Replace all (a version is saved first)", "Reemplazar todo (antes se guarda una versión)"),
+    ("No results", "Sin resultados"),
+    ("{} results in {} files", "{} resultados en {} archivos"),
+    ("Before replacing “{}”", "Antes de reemplazar «{}»"),
+    ("Replaced {} occurrences in {} files", "Reemplazadas {} apariciones en {} archivos"),
+    ("Could not replace: {}", "No se pudo reemplazar: {}"),
+    ("Find in project", "Buscar en el proyecto"),
 ];
 
 #[cfg(test)]
