@@ -1,7 +1,7 @@
-//! Plantillas para proyectos nuevos. Están escritas en inglés con marcas
-//! `@@texto@@` que se traducen al crear el proyecto (incluidas rutas como
-//! `@@chapters@@/`), así que un proyecto en español sale con `babel spanish`,
-//! carpetas `capitulos/` y títulos en español.
+//! Templates for new projects. They are written in English with `@@text@@`
+//! markers that are translated when the project is created (including paths
+//! such as `@@chapters@@/`), so a project created with the Spanish interface
+//! gets `babel spanish`, `capitulos/` folders and Spanish headings.
 
 use std::fs;
 use std::path::Path;
@@ -12,7 +12,7 @@ pub struct Template {
     pub name: &'static str,
     pub description: &'static str,
     pub icon: &'static str,
-    /// (ruta relativa, contenido). Una ruta que acaba en `/` es una carpeta vacía.
+    /// (relative path, content). A path ending in `/` is an empty folder.
     pub files: &'static [(&'static str, &'static str)],
 }
 
@@ -29,11 +29,11 @@ pub const TEMPLATES: &[Template] = &[
         icon: "accessories-dictionary-symbolic",
         files: &[
             ("main.tex", THESIS),
-            ("@@chapters@@/@@introduction@@.tex", "\\chapter{@@Introduction@@}\n\\label{cap:@@introduction@@}\n\n@@Context and motivation of the work@@~\\cite{knuth1984}.\n\n\\section{@@Objectives@@}\n\n\\section{@@Document structure@@}\n"),
-            ("@@chapters@@/@@state-of-the-art@@.tex", "\\chapter{@@State of the art@@}\n\\label{cap:@@state-of-the-art@@}\n\n"),
-            ("@@chapters@@/@@methodology@@.tex", "\\chapter{@@Methodology@@}\n\\label{cap:@@methodology@@}\n\n"),
-            ("@@chapters@@/@@results@@.tex", "\\chapter{@@Results@@}\n\\label{cap:@@results@@}\n\n"),
-            ("@@chapters@@/@@conclusions@@.tex", "\\chapter{@@Conclusions@@}\n\\label{cap:@@conclusions@@}\n\n\\section{@@Future work@@}\n"),
+            ("@@chapters@@/@@introduction@@.tex", "\\chapter{@@Introduction@@}\n\\label{@@chap@@:@@introduction@@}\n\n@@Context and motivation of the work@@~\\cite{knuth1984}.\n\n\\section{@@Objectives@@}\n\n\\section{@@Document structure@@}\n"),
+            ("@@chapters@@/@@state-of-the-art@@.tex", "\\chapter{@@State of the art@@}\n\\label{@@chap@@:@@state-of-the-art@@}\n\n"),
+            ("@@chapters@@/@@methodology@@.tex", "\\chapter{@@Methodology@@}\n\\label{@@chap@@:@@methodology@@}\n\n"),
+            ("@@chapters@@/@@results@@.tex", "\\chapter{@@Results@@}\n\\label{@@chap@@:@@results@@}\n\n"),
+            ("@@chapters@@/@@conclusions@@.tex", "\\chapter{@@Conclusions@@}\n\\label{@@chap@@:@@conclusions@@}\n\n\\section{@@Future work@@}\n"),
             ("@@references@@.bib", BIB),
             ("@@figures@@/", ""),
         ],
@@ -53,8 +53,8 @@ pub const TEMPLATES: &[Template] = &[
     Template { name: "Empty", description: "Just the essentials", icon: "document-new-symbolic", files: &[("main.tex", EMPTY)] },
 ];
 
-/// Sustituye las marcas `@@…@@`: `TITLE` por el título, `BABEL` por la opción
-/// de idioma de babel y el resto por su traducción.
+/// Replaces `@@…@@` markers: `TITLE` with the title, `BABEL` with babel's
+/// language option and anything else with its translation.
 fn localize(text: &'static str, title: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
@@ -73,7 +73,7 @@ fn localize(text: &'static str, title: &str) -> String {
     out
 }
 
-/// Escribe la plantilla en `root` (que debe existir) sin pisar archivos existentes.
+/// Writes the template into `root` (which must exist) without overwriting files.
 pub fn write(template: &Template, root: &Path, title: &str) -> std::io::Result<()> {
     for (rel, content) in template.files {
         let rel = localize(rel, title);
@@ -256,8 +256,8 @@ const EMPTY: &str = r"\documentclass{article}
 mod tests {
     use super::*;
 
-    /// Compila cada plantilla, en inglés y en español, con latexmk.
-    /// Necesita TeX Live (y texlive-langspanish): `cargo test -- --ignored`.
+    /// Compiles every template, in English and in Spanish, with latexmk.
+    /// Needs TeX Live (and texlive-langspanish): `cargo test -- --ignored`.
     #[test]
     #[ignore]
     fn templates_compile() {
@@ -266,13 +266,13 @@ mod tests {
             for (i, t) in TEMPLATES.iter().enumerate() {
                 let dir = std::env::temp_dir().join(format!("rutex-tpl-{}-{i}-{spanish}", std::process::id()));
                 fs::create_dir_all(&dir).unwrap();
-                write(t, &dir, "Prueba").unwrap();
+                write(t, &dir, "Test").unwrap();
                 let out = std::process::Command::new("latexmk")
                     .args(["-pdf", "-interaction=nonstopmode", "-halt-on-error", "main.tex"])
                     .current_dir(&dir)
                     .output()
                     .unwrap();
-                assert!(out.status.success(), "«{}» (español={spanish}) no compila:\n{}", t.name, String::from_utf8_lossy(&out.stdout));
+                assert!(out.status.success(), "\"{}\" (spanish={spanish}) does not compile:\n{}", t.name, String::from_utf8_lossy(&out.stdout));
                 fs::remove_dir_all(&dir).unwrap();
             }
         }
@@ -281,7 +281,22 @@ mod tests {
 
     #[test]
     fn localizes_tokens() {
-        let s = localize("\\graphicspath{{@@figures@@/}} @@TITLE@@ [@@BABEL@@]", "Hola");
-        assert_eq!(s, "\\graphicspath{{figures/}} Hola [english]");
+        let s = localize("\\graphicspath{{@@figures@@/}} @@TITLE@@ [@@BABEL@@]", "Hello");
+        assert_eq!(s, "\\graphicspath{{figures/}} Hello [english]");
+    }
+
+    /// With the default (English) interface, a new thesis is entirely in English.
+    #[test]
+    fn thesis_is_english_by_default() {
+        let dir = std::env::temp_dir().join(format!("rutex-tpl-en-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        write(&TEMPLATES[1], &dir, "My thesis").unwrap();
+        let main = fs::read_to_string(dir.join("main.tex")).unwrap();
+        assert!(main.contains("\\usepackage[english]{babel}"));
+        assert!(main.contains("\\input{chapters/introduction}"));
+        let intro = fs::read_to_string(dir.join("chapters/introduction.tex")).unwrap();
+        assert!(intro.starts_with("\\chapter{Introduction}\n\\label{chap:introduction}"));
+        assert!(dir.join("references.bib").is_file() && dir.join("figures").is_dir());
+        fs::remove_dir_all(dir).unwrap();
     }
 }
