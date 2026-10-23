@@ -1,0 +1,21 @@
+[package]
+name = "rutex"
+version = "0.1.0"
+description = "Editor LaTeX nativo para Linux con compilación automática y visor PDF"
+license = "GPL-3.0-or-later"
+edition = "2024"
+
+[dependencies]
+adw = { version = "0.9.2", package = "libadwaita", features = ["v1_5"] }
+async-channel = "2.5.0"
+glib-unix = "0.22.8"
+gtk = { version = "0.11.5", package = "gtk4", features = ["v4_14"] }
+libc = "0.2.191"
+poppler = { version = "0.26.0", package = "poppler-rs", features = ["v0_82"] }
+sourceview5 = { version = "0.11.2", features = ["v5_4"] }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
