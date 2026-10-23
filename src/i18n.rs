@@ -473,6 +473,22 @@ const TABLE: &[(&str, &str)] = &[
     ("Formula", "Fórmula"),
     ("Insert an image, a table, a symbol or a reference", "Insertar una imagen, una tabla, un símbolo o una referencia"),
     ("New window", "Nueva ventana"),
+    ("Close", "Cerrar"),
+    ("Export to Word (.docx)…", "Exportar a Word (.docx)…"),
+    ("Export to Word", "Exportar a Word"),
+    ("Exporting to Word needs pandoc", "Para exportar a Word hace falta pandoc"),
+    ("pandoc is a free document converter. Install it with:\n\n{}\n\nand try again.", "pandoc es un conversor de documentos gratuito. Instálalo con:\n\n{}\n\ny vuelve a intentarlo."),
+    ("Copy command", "Copiar comando"),
+    ("Exporting to Word…", "Exportando a Word…"),
+    ("Exported {}", "Exportado {}"),
+    ("Word cannot show everything LaTeX does. Worth a look:", "Word no puede mostrar todo lo que hace LaTeX. Conviene revisar:"),
+    ("Could not export to Word", "No se pudo exportar a Word"),
+    ("Compile the document once so references get their numbers.", "Compila el documento una vez para que las referencias tengan número."),
+    ("References without a number: {}", "Referencias sin número: {}"),
+    ("drawing not converted", "dibujo no convertido"),
+    ("{} drawings could not be converted; they are marked in the document.", "{} dibujos no se pudieron convertir; están marcados en el documento."),
+    ("EPS images are not supported by Word: {}", "Word no admite imágenes EPS: {}"),
+    ("Image not found: {}", "Imagen no encontrada: {}"),
 ];
 
 #[cfg(test)]

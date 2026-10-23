@@ -566,6 +566,7 @@ impl ProjectWindow {
         section(tr("PDF"), &[
             (tr("Fullscreen PDF"), "win.pdf-fullscreen"),
             (tr("Save PDF to the project folder"), "win.export-pdf"),
+            (tr("Export to Word (.docx)…"), "win.export-docx"),
             (tr("Open PDF in external viewer"), "win.open-pdf"),
             (tr("Clean auxiliary files"), "win.clean"),
         ]);
@@ -1081,6 +1082,7 @@ impl ProjectWindow {
             }
         }));
         add("export-pdf", Box::new(|t| t.export_pdf()));
+        add("export-docx", Box::new(|t| t.export_docx()));
         add("open-pdf", Box::new(|t| t.open_pdf_external()));
         add("clean", Box::new(|t| t.clean()));
         add("show-files", Box::new(|t| t.show_sidebar("files")));
@@ -1459,6 +1461,73 @@ impl ProjectWindow {
             }
         });
         *self.autosave.borrow_mut() = Some(id);
+    }
+
+    /// Word copy of the document for people who review in Word (see export.rs).
+    fn export_docx(self: &Rc<Self>) {
+        let Some(pandoc) = crate::export::find_pandoc() else {
+            let hint = crate::export::install_hint();
+            let dialog = adw::AlertDialog::builder()
+                .heading(tr("Exporting to Word needs pandoc"))
+                .body(trf("pandoc is a free document converter. Install it with:\n\n{}\n\nand try again.", &[&hint]))
+                .close_response("close")
+                .build();
+            dialog.add_responses(&[("close", tr("Close")), ("copy", tr("Copy command"))]);
+            let window = self.window.clone();
+            dialog.connect_response(Some("copy"), move |_, _| window.clipboard().set_text(hint));
+            dialog.present(Some(&self.window));
+            return;
+        };
+        self.save();
+        let p = self.project.borrow().clone();
+        let stem = p.main.file_stem().unwrap_or_default().to_string_lossy().into_owned();
+        let chooser = gtk::FileDialog::builder()
+            .title(tr("Export to Word"))
+            .initial_name(format!("{stem}.docx"))
+            .initial_folder(&gio::File::for_path(&p.root))
+            .modal(true)
+            .build();
+        let weak = Rc::downgrade(self);
+        chooser.save(Some(&self.window), gio::Cancellable::NONE, move |res| {
+            let (Some(this), Ok(file)) = (weak.upgrade(), res) else { return };
+            let Some(out) = file.path() else { return };
+            this.toast(tr("Exporting to Word…"));
+            let weak = Rc::downgrade(&this);
+            glib::spawn_future_local(async move {
+                let target = out.clone();
+                let result = gio::spawn_blocking(move || {
+                    crate::export::export(&crate::export::Export { pandoc: &pandoc, root: &p.root, main: &p.main, build_dir: &p.build_dir, out: &target })
+                })
+                .await
+                .unwrap_or_else(|_| Err("thread".into()));
+                let Some(this) = weak.upgrade() else { return };
+                let open = {
+                    let (window, out) = (this.window.clone(), out.clone());
+                    move || gtk::FileLauncher::new(Some(&gio::File::for_path(&out))).launch(Some(&window), gio::Cancellable::NONE, |_| {})
+                };
+                let name = out.file_name().unwrap_or_default().to_string_lossy().into_owned();
+                match result {
+                    Ok(notes) if notes.is_empty() => {
+                        let toast = adw::Toast::builder().title(glib::markup_escape_text(&trf("Exported {}", &[&name]))).button_label(tr("Open")).timeout(6).build();
+                        toast.connect_button_clicked(move |_| open());
+                        this.toasts.add_toast(toast);
+                    }
+                    Ok(notes) => {
+                        let body = format!("{}\n\n• {}", tr("Word cannot show everything LaTeX does. Worth a look:"), notes.join("\n• "));
+                        let dialog = adw::AlertDialog::builder().heading(trf("Exported {}", &[&name])).body(body).close_response("close").build();
+                        dialog.add_responses(&[("close", tr("Close")), ("open", tr("Open"))]);
+                        dialog.set_response_appearance("open", adw::ResponseAppearance::Suggested);
+                        dialog.connect_response(Some("open"), move |_, _| open());
+                        dialog.present(Some(&this.window));
+                    }
+                    Err(e) => {
+                        let dialog = adw::AlertDialog::builder().heading(tr("Could not export to Word")).body(e).close_response("close").build();
+                        dialog.add_response("close", tr("Close"));
+                        dialog.present(Some(&this.window));
+                    }
+                }
+            });
+        });
     }
 
     fn save(&self) {

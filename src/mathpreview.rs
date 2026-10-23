@@ -237,8 +237,8 @@ impl MathPreview {
 /// Only one thread builds a given preamble format at a time.
 static FORMAT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-/// Runs a TeX program with a time limit; true if it produced `pdf`.
-fn run_tex(root: &Path, dir: &Path, program: &str, args: &[String], formats: bool) -> Result<(), String> {
+/// Runs a TeX program in `root`, killing it after `limit`.
+pub(crate) fn run_tex(root: &Path, dir: &Path, program: &str, args: &[String], formats: bool, limit: Duration) -> Result<(), String> {
     let mut cmd = crate::compiler::command(program);
     cmd.current_dir(root).env("max_print_line", "1000").args(args).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
     if formats {
@@ -250,7 +250,7 @@ fn run_tex(root: &Path, dir: &Path, program: &str, args: &[String], formats: boo
     loop {
         match child.try_wait() {
             Ok(Some(_)) => return Ok(()),
-            Ok(None) if started.elapsed() > Duration::from_secs(30) => {
+            Ok(None) if started.elapsed() > limit => {
                 let _ = child.kill();
                 return Err("timeout".into());
             }
@@ -281,7 +281,7 @@ fn preamble_format(root: &Path, dir: &Path, preamble: &str, program: &str, finge
     let tex = dir.join(format!("{name}.tex"));
     fs::write(&tex, format!("\\documentclass[border=1pt,varwidth=40em]{{standalone}}\n{preamble}\n\\begin{{document}}\n\\end{{document}}\n")).ok()?;
     let args = vec!["-ini".into(), "-interaction=nonstopmode".into(), format!("-output-directory={}", dir.display()), format!("-jobname={name}"), "&pdflatex".into(), "mylatexformat.ltx".into(), tex.display().to_string()];
-    run_tex(root, dir, "pdflatex", &args, false).ok()?;
+    run_tex(root, dir, "pdflatex", &args, false, Duration::from_secs(30)).ok()?;
     dir.join(format!("{name}.fmt")).is_file().then_some(name)
 }
 
@@ -295,7 +295,7 @@ fn render_blocking(root: &Path, dir: &Path, preamble: &str, program: &str, finge
         fs::write(&tex, src).map_err(|e| e.to_string())?;
         let _ = fs::remove_file(&pdf);
         let args = vec!["-interaction=nonstopmode".into(), "-halt-on-error".into(), format!("-output-directory={}", dir.display()), tex.display().to_string()];
-        run_tex(root, dir, program, &args, formats)?;
+        run_tex(root, dir, program, &args, formats, Duration::from_secs(30))?;
         if pdf.is_file() {
             Ok(())
         } else {

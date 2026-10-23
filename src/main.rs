@@ -5,6 +5,7 @@ mod completion;
 mod config;
 mod demo;
 mod editor;
+mod export;
 mod filetree;
 mod history;
 mod historyview;

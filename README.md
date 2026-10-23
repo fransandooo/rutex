@@ -41,6 +41,9 @@ The interface is in English by default, and Spanish is available in Preferences.
   CSV.
 - **References by DOI or arXiv id**: paste it, and the entry is added to your `.bib` and cited.
   **Zotero** (with Better BibTeX) works too.
+- **Export to Word** (☰ → Export to Word): for supervisors who review in Word. Equations become real Word
+  equations, references keep their numbers, and TikZ drawings, plots, Gantt charts and pseudocode
+  are inserted as images. Needs `pandoc` (`sudo pacman -S pandoc-cli`).
 - **Symbol palette** (`Ctrl+Shift+M`) with search, and quick snippets: inside a formula `@a` →
   `\alpha`, `@8` → `\infty`, `@/` → a fraction; `BEQ` + `Tab` → an equation (also `BAL`, `BIT`,
   `BEN`, `BFI`, `BTA`, `BCAS`…).
