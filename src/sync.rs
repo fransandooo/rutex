@@ -65,7 +65,7 @@ fn explain_failure(stderr: &str) -> String {
     } else if s.contains("Could not resolve host") || s.contains("Connection timed out") || s.contains("unable to access") {
         tr("Could not reach the remote. Check your internet connection.").into()
     } else {
-        s.lines().filter(|l| !l.trim().is_empty()).last().unwrap_or("git failed").trim_start_matches("fatal: ").trim_start_matches("error: ").to_string()
+        s.lines().rfind(|l| !l.trim().is_empty()).unwrap_or("git failed").trim_start_matches("fatal: ").trim_start_matches("error: ").to_string()
     }
 }
 

@@ -128,6 +128,8 @@ pub fn regions(text: &str) -> Vec<Region> {
     out
 }
 
+type ToggleFn = RefCell<Option<Box<dyn Fn(u32)>>>;
+
 mod imp {
     use super::*;
 
@@ -135,7 +137,7 @@ mod imp {
     pub struct FoldBar {
         /// First line of each foldable region → whether it is folded.
         pub starts: RefCell<HashMap<u32, bool>>,
-        pub on_toggle: RefCell<Option<Box<dyn Fn(u32)>>>,
+        pub on_toggle: ToggleFn,
     }
 
     #[glib::object_subclass]
