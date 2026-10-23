@@ -14,6 +14,7 @@ mod quickopen;
 mod synctex;
 mod templates;
 mod theme;
+mod ui;
 mod window;
 
 use adw::prelude::*;

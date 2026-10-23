@@ -175,3 +175,24 @@ tabbar.rutex-tabs tab:selected {
 .welcome-action image.accent {
   color: var(--accent-color);
 }
+
+/* ---------- Menú contextual ---------- */
+popover.context-menu > contents {
+  padding: 6px;
+  border-radius: 12px;
+  min-width: 220px;
+}
+popover.context-menu .menu-item {
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-weight: normal;
+}
+popover.context-menu .menu-item image {
+  opacity: 0.75;
+}
+popover.context-menu .menu-item.destructive {
+  color: var(--error-color);
+}
+popover.context-menu separator {
+  margin: 4px 6px;
+}

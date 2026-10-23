@@ -12,6 +12,7 @@ use gtk::prelude::*;
 use gtk::{gdk, gio, glib};
 
 use crate::project;
+use crate::ui::{self, MenuEntry};
 
 const SKIP_DIRS: &[&str] = &["node_modules", "target", "__pycache__", "_minted"];
 
@@ -162,45 +163,28 @@ impl FileTree {
     fn popup_menu(&self, parent: &gtk::Widget, rel: &Path, is_dir: bool, x: f64, y: f64) {
         let target = rel.to_string_lossy().to_string();
         let dir = if is_dir { target.clone() } else { rel.parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_default() };
-        let item = |label: &str, action: &str, value: &str| {
-            let it = gio::MenuItem::new(Some(label), None);
-            it.set_action_and_target_value(Some(action), Some(&value.to_variant()));
-            it
-        };
-
-        let menu = gio::Menu::new();
-        let create = gio::Menu::new();
-        create.append_item(&item("Nuevo archivo…", "win.tree-new-file", &dir));
-        create.append_item(&item("Nueva carpeta…", "win.tree-new-folder", &dir));
-        menu.append_section(None, &create);
+        let mut entries = vec![
+            MenuEntry::item("document-new-symbolic", "Nuevo archivo…", "win.tree-new-file", &dir),
+            MenuEntry::item("folder-new-symbolic", "Nueva carpeta…", "win.tree-new-folder", &dir),
+        ];
         if !target.is_empty() {
-            let edit = gio::Menu::new();
-            edit.append_item(&item("Renombrar…", "win.tree-rename", &target));
+            entries.push(MenuEntry::Separator);
+            entries.push(MenuEntry::item("document-edit-symbolic", "Renombrar…", "win.tree-rename", &target));
             if !is_dir && project::has_ext(rel, "tex") {
-                edit.append_item(&item("Usar como archivo principal", "win.tree-set-main", &target));
+                entries.push(MenuEntry::item("starred-symbolic", "Usar como archivo principal", "win.tree-set-main", &target));
             }
-            menu.append_section(None, &edit);
         }
-        let misc = gio::Menu::new();
-        misc.append_item(&item("Copiar ruta", "win.tree-copy-path", &target));
-        misc.append_item(&item("Mostrar en el gestor de archivos", "win.tree-reveal", &target));
-        menu.append_section(None, &misc);
+        entries.push(MenuEntry::Separator);
+        entries.push(MenuEntry::item("edit-copy-symbolic", "Copiar ruta", "win.tree-copy-path", &target));
+        entries.push(MenuEntry::item("folder-open-symbolic", "Mostrar en el gestor de archivos", "win.tree-reveal", &target));
         if !target.is_empty() {
-            let danger = gio::Menu::new();
-            danger.append_item(&item("Mover a la papelera", "win.tree-trash", &target));
-            menu.append_section(None, &danger);
+            entries.push(MenuEntry::Separator);
+            entries.push(MenuEntry::danger("user-trash-symbolic", "Mover a la papelera", "win.tree-trash", &target));
         }
-
-        let popover = gtk::PopoverMenu::from_model(Some(&menu));
-        popover.set_parent(parent);
-        popover.set_has_arrow(false);
-        popover.set_halign(gtk::Align::Start);
-        popover.set_pointing_to(Some(&gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
-        popover.connect_closed(|p| {
-            let p = p.clone();
-            glib::idle_add_local_once(move || p.unparent());
-        });
-        popover.popup();
+        // El menú cuelga de la barra lateral entera (no de la fila) para que nunca se recorte.
+        let point = parent.compute_point(&self.widget, &gtk::graphene::Point::new(x as f32, y as f32));
+        let (px, py) = point.map_or((x, y), |p| (p.x() as f64, p.y() as f64));
+        ui::context_menu(&self.widget, px, py, entries);
     }
 
     /// Relee la carpeta; solo reconstruye el árbol si algo cambió.
