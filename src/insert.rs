@@ -5,7 +5,24 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use gtk::gio;
+
 use crate::i18n::tr;
+
+/// The Insert menu, shared by its header button and the editor's right-click menu.
+pub fn menu() -> gio::Menu {
+    let menu = gio::Menu::new();
+    let add = |m: &gio::Menu, items: &[(&str, &str)]| {
+        let s = gio::Menu::new();
+        for (label, action) in items {
+            s.append(Some(label), Some(action));
+        }
+        m.append_section(None, &s);
+    };
+    add(&menu, &[(tr("Image…"), "win.insert-image"), (tr("Table from CSV…"), "win.insert-csv"), (tr("Math symbol…"), "win.symbols")]);
+    add(&menu, &[(tr("Reference from DOI or arXiv…"), "win.add-reference"), (tr("Citation from Zotero"), "win.zotero-cite")]);
+    menu
+}
 
 pub const IMAGE_EXTS: &[&str] = &["png", "jpg", "jpeg", "pdf", "eps", "svg", "gif", "webp"];
 

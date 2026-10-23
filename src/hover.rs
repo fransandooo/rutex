@@ -82,57 +82,88 @@ impl IssueHover {
     }
 }
 
+/// A bubble card: a small header (icon + kind), a title, and an optional
+/// footer. Returns (card, body) so callers can add content between them.
+pub fn card(icon: &str, kind: &str, title: Option<&str>) -> (gtk::Box, gtk::Box) {
+    let card = gtk::Box::builder().orientation(gtk::Orientation::Vertical).spacing(6).css_classes(["bubble"]).build();
+    let header = gtk::Box::builder().spacing(6).css_classes(["bubble-kind"]).build();
+    header.append(&gtk::Image::from_icon_name(icon));
+    header.append(&gtk::Label::builder().label(kind).xalign(0.0).build());
+    card.append(&header);
+    if let Some(t) = title {
+        card.append(&gtk::Label::builder().label(t).xalign(0.0).wrap(true).wrap_mode(gtk::pango::WrapMode::WordChar).max_width_chars(52).css_classes(["bubble-title"]).build());
+    }
+    let body = gtk::Box::builder().orientation(gtk::Orientation::Vertical).spacing(6).build();
+    card.append(&body);
+    (card, body)
+}
+
+pub fn footer(text: &str) -> gtk::Label {
+    gtk::Label::builder().label(text).xalign(0.0).wrap(true).max_width_chars(60).css_classes(["bubble-foot"]).build()
+}
+
+fn text(t: &str) -> gtk::Label {
+    gtk::Label::builder().label(t).xalign(0.0).wrap(true).wrap_mode(gtk::pango::WrapMode::WordChar).max_width_chars(52).selectable(true).css_classes(["bubble-text"]).build()
+}
+
 /// Errors and warnings of a line.
 pub fn issues_bubble(issues: &[(bool, String)]) -> gtk::Box {
-    let b = gtk::Box::builder().orientation(gtk::Orientation::Vertical).spacing(6).css_classes(["issue-bubble"]).build();
+    let errors = issues.iter().filter(|i| i.0).count();
+    let (icon, kind) = if errors > 0 { ("dialog-error-symbolic", tr("Error")) } else { ("dialog-warning-symbolic", tr("Warning")) };
+    let (card, body) = card(icon, kind, None);
+    card.add_css_class(if errors > 0 { "error" } else { "warning" });
     for (is_error, msg) in issues {
         let row = gtk::Box::builder().spacing(8).build();
-        let icon = if *is_error { "dialog-error-symbolic" } else { "dialog-warning-symbolic" };
-        row.append(&gtk::Image::builder().icon_name(icon).valign(gtk::Align::Start).css_classes([if *is_error { "error" } else { "warning" }]).build());
-        row.append(&gtk::Label::builder().label(msg).xalign(0.0).wrap(true).max_width_chars(70).selectable(true).build());
-        b.append(&row);
+        if issues.len() > 1 {
+            row.append(&gtk::Image::builder().icon_name(if *is_error { "dialog-error-symbolic" } else { "dialog-warning-symbolic" }).valign(gtk::Align::Start).build());
+        }
+        row.append(&text(msg));
+        body.append(&row);
     }
-    b.append(&gtk::Label::builder().label(tr("Click the margin icon to see the problems list")).xalign(0.0).css_classes(["dim-label", "caption"]).build());
-    b
+    card.append(&footer(tr("Click the margin icon to see the problems list")));
+    card
 }
 
-/// What a `\\ref` points to: a title or caption, and where it is defined.
-pub fn label_bubble(key: &str, found: Option<(String, String)>) -> gtk::Box {
-    let b = gtk::Box::builder().orientation(gtk::Orientation::Vertical).spacing(4).css_classes(["ref-bubble"]).build();
+/// What a `\\ref` points to. `found` = (kind, description, location).
+pub fn label_bubble(key: &str, found: Option<(&str, String, String)>) -> gtk::Box {
     match found {
-        Some((description, location)) => {
-            b.append(&gtk::Label::builder().label(&description).xalign(0.0).wrap(true).max_width_chars(70).css_classes(["heading"]).build());
-            b.append(&gtk::Label::builder().label(format!("{key} · {location}")).xalign(0.0).css_classes(["dim-label", "caption", "monospace"]).build());
-            b.append(&gtk::Label::builder().label(tr("Ctrl+click to go there")).xalign(0.0).css_classes(["dim-label", "caption"]).build());
+        Some((kind, description, location)) => {
+            let (card, _) = card("mail-attachment-symbolic", kind, Some(&description));
+            card.append(&footer(&format!("{key} · {location} · {}", tr("Ctrl+click to go there"))));
+            card
         }
         None => {
-            b.append(&gtk::Label::builder().label(crate::i18n::trf("No \\label{{}} in the project", &[&key])).xalign(0.0).css_classes(["warning"]).build());
+            let (card, body) = card("dialog-warning-symbolic", tr("Reference"), Some(key));
+            card.add_css_class("warning");
+            body.append(&text(&crate::i18n::trf("No \\label{{}} in the project", &[&key])));
+            card
         }
     }
-    b
 }
 
-/// A bibliography entry: authors, year and title.
+/// A bibliography entry: title, authors and year.
 pub fn cite_bubble(key: &str, entry: Option<&crate::index::BibEntry>) -> gtk::Box {
-    let b = gtk::Box::builder().orientation(gtk::Orientation::Vertical).spacing(4).css_classes(["ref-bubble"]).build();
     match entry {
         Some(e) => {
+            let title = if e.title.is_empty() { key.to_string() } else { e.title.clone() };
+            let (card, body) = card("x-office-address-book-symbolic", tr("Citation"), Some(&title));
             let who = match (e.author.is_empty(), e.year.is_empty()) {
                 (false, false) => format!("{} ({})", e.author, e.year),
                 (false, true) => e.author.clone(),
                 (true, false) => e.year.clone(),
-                (true, true) => key.to_string(),
+                (true, true) => String::new(),
             };
-            b.append(&gtk::Label::builder().label(&who).xalign(0.0).css_classes(["heading"]).build());
-            if !e.title.is_empty() {
-                b.append(&gtk::Label::builder().label(&e.title).xalign(0.0).wrap(true).max_width_chars(70).build());
+            if !who.is_empty() {
+                body.append(&text(&who));
             }
-            b.append(&gtk::Label::builder().label(format!("{key} · {}:{}", e.file.display(), e.line)).xalign(0.0).css_classes(["dim-label", "caption", "monospace"]).build());
-            b.append(&gtk::Label::builder().label(tr("Ctrl+click to go there")).xalign(0.0).css_classes(["dim-label", "caption"]).build());
+            card.append(&footer(&format!("{key} · {}:{} · {}", e.file.display(), e.line, tr("Ctrl+click to go there"))));
+            card
         }
         None => {
-            b.append(&gtk::Label::builder().label(crate::i18n::trf("{} is not in any .bib file", &[&key])).xalign(0.0).css_classes(["warning"]).build());
+            let (card, body) = card("dialog-warning-symbolic", tr("Citation"), Some(key));
+            card.add_css_class("warning");
+            body.append(&text(&crate::i18n::trf("{} is not in any .bib file", &[&key])));
+            card
         }
     }
-    b
 }

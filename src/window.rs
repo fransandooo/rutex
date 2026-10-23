@@ -552,13 +552,6 @@ impl ProjectWindow {
             (tr("Version history…"), "win.history"),
             (tr("Save a version…"), "win.save-version"),
         ]);
-        section(tr("Insert"), &[
-            (tr("Image…"), "win.insert-image"),
-            (tr("Table from CSV…"), "win.insert-csv"),
-            (tr("Math symbol…"), "win.symbols"),
-            (tr("Reference from DOI or arXiv…"), "win.add-reference"),
-            (tr("Citation from Zotero"), "win.zotero-cite"),
-        ]);
         section(tr("PDF"), &[
             (tr("Fullscreen PDF"), "win.pdf-fullscreen"),
             (tr("Save PDF to the project folder"), "win.export-pdf"),
@@ -595,6 +588,14 @@ impl ProjectWindow {
 
         let history_btn = gtk::Button::builder().icon_name("document-open-recent-symbolic").tooltip_text(tr("Version history (Ctrl+Shift+H)")).action_name("win.history").build();
         header.pack_end(&menu_btn);
+        // Its own button: images, tables, symbols and references are easy to find.
+        let insert_btn = gtk::MenuButton::builder()
+            .child(&adw::ButtonContent::builder().icon_name("list-add-symbolic").label(tr("Insert")).build())
+            .menu_model(&crate::insert::menu())
+            .tooltip_text(tr("Insert an image, a table, a symbol or a reference"))
+            .css_classes(["flat"])
+            .build();
+        header.pack_start(&insert_btn);
         header.pack_end(&history_btn);
         header.pack_end(&compile_btn);
         header.pack_end(&issues_btn);

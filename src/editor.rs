@@ -289,7 +289,9 @@ impl Editor {
         view.set_mark_attributes(MARK_ERROR, &self.error_attrs, 10);
         view.set_mark_attributes(MARK_WARNING, &self.warning_attrs, 5);
         if let Some(h) = self.hover.borrow().as_ref() {
-            view.hover().add_provider(h);
+            let hover = view.hover();
+            hover.add_provider(h);
+            hover.set_hover_delay(250);
         }
         // Ctrl+click on a \\ref or \\cite key: go to its \\label or .bib entry.
         let goto_def = gtk::GestureClick::new();
@@ -356,20 +358,48 @@ impl Editor {
         // commands and math as no-spell-check, so only real text is checked.
         let spell = (lang == Some("rutex-latex") || lang.is_none()).then(|| {
             let adapter = libspelling::TextBufferAdapter::new(&buffer, &self.checker);
-            view.set_extra_menu(Some(&adapter.menu_model()));
+            let extra = gio::Menu::new();
+            extra.append_section(None, &adapter.menu_model());
+            extra.append_submenu(Some(tr("Insert")), &crate::insert::menu());
+            view.set_extra_menu(Some(&extra));
             view.insert_action_group("spelling", Some(&adapter));
             adapter.set_enabled(cfg.spellcheck);
             adapter
         });
         // Images and .tex files dropped onto the editor.
-        let drop = gtk::DropTarget::new(gtk::gdk::FileList::static_type(), gtk::gdk::DragAction::COPY);
+        // Capture phase: the text view's own drop target would otherwise win
+        // and paste the file's path as text. Drags inside the editor (moving a
+        // selection) are left to it.
+        let drop = gtk::DropTarget::new(glib::Type::INVALID, gtk::gdk::DragAction::COPY | gtk::gdk::DragAction::MOVE);
+        drop.set_types(&[gtk::gdk::FileList::static_type(), glib::Type::STRING]);
+        drop.set_propagation_phase(gtk::PropagationPhase::Capture);
+        drop.connect_accept(|_, d| {
+            // External drops announce mime types; map them to what we can read.
+            let f = d.formats().union_deserialize_types();
+            d.drag().is_none() && (f.contains_type(gtk::gdk::FileList::static_type()) || f.contains_type(glib::Type::STRING))
+        });
+        drop.connect_enter(|_, _, _| gtk::gdk::DragAction::COPY);
+        drop.connect_motion(|_, _, _| gtk::gdk::DragAction::COPY);
         let (weak, v) = (Rc::downgrade(self), view.downgrade());
         drop.connect_drop(move |_, value, x, y| {
-            let (Some(this), Some(view), Ok(list)) = (weak.upgrade(), v.upgrade(), value.get::<gtk::gdk::FileList>()) else { return false };
-            let files: Vec<PathBuf> = list.files().iter().filter_map(|f| f.path()).collect();
+            let (Some(this), Some(view)) = (weak.upgrade(), v.upgrade()) else { return false };
             let (bx, by) = view.window_to_buffer_coords(gtk::TextWindowType::Widget, x as i32, y as i32);
-            let Some(iter) = view.iter_at_location(bx, by) else { return false };
-            this.insert_files(&view, &files, Some(iter.offset()))
+            let Some(mut iter) = view.iter_at_location(bx, by) else { return false };
+            if let Ok(list) = value.get::<gtk::gdk::FileList>() {
+                let files: Vec<PathBuf> = list.files().iter().filter_map(|f| f.path()).collect();
+                return this.insert_files(&view, &files, Some(iter.offset()));
+            }
+            let Ok(text) = value.get::<String>() else { return false };
+            let files = dropped_paths(&text);
+            if !files.is_empty() && this.insert_files(&view, &files, Some(iter.offset())) {
+                return true;
+            }
+            // Ordinary text from another app: insert it where it was dropped.
+            let buffer = view.buffer();
+            buffer.begin_user_action();
+            buffer.insert(&mut iter, &text);
+            buffer.end_user_action();
+            true
         });
         view.add_controller(drop);
 
@@ -688,7 +718,12 @@ impl Editor {
         Some(Box::pin(async move {
             Some(match math.render(formula, color).await {
                 Ok(texture) => crate::mathpreview::bubble(&texture),
-                Err(msg) => gtk::Label::builder().label(crate::i18n::trf("Could not render the formula: {}", &[&msg])).wrap(true).max_width_chars(60).css_classes(["dim-label", "caption"]).build().upcast(),
+                Err(msg) => {
+                    let (card, body) = crate::hover::card("dialog-warning-symbolic", tr("Formula"), None);
+                    card.add_css_class("warning");
+                    body.append(&gtk::Label::builder().label(crate::i18n::trf("Could not render the formula: {}", &[&msg])).wrap(true).max_width_chars(52).xalign(0.0).css_classes(["bubble-text"]).build());
+                    card.upcast()
+                }
             })
         }))
     }
@@ -715,33 +750,34 @@ impl Editor {
         let language = self.checker.language().map(|l| crate::spell::display_name(&l)).unwrap_or_default();
         let corrections: Vec<String> = self.checker.list_corrections(&word).into_iter().take(6).map(|c| c.to_string()).collect();
 
-        let b = gtk::Box::builder().orientation(gtk::Orientation::Vertical).spacing(8).css_classes(["spell-bubble"]).build();
-        b.append(&gtk::Label::builder().label(crate::i18n::trf("“{}” is not in the {} dictionary", &[&word, &language])).xalign(0.0).wrap(true).css_classes(["dim-label", "caption"]).build());
+        let (b, body) = crate::hover::card("tools-check-spelling-symbolic", tr("Spelling"), Some(&word));
+        b.add_css_class("spell-bubble");
+        body.append(&gtk::Label::builder().label(crate::i18n::trf("Not in the {} dictionary", &[&language])).xalign(0.0).css_classes(["bubble-text"]).build());
         // Marks survive edits, iters do not.
         let m_start = buffer.create_mark(None, &start, true);
         let m_end = buffer.create_mark(None, &end, false);
-        let fixes = gtk::FlowBox::builder().selection_mode(gtk::SelectionMode::None).max_children_per_line(6).column_spacing(4).row_spacing(4).build();
-        for c in &corrections {
-            let btn = gtk::Button::builder().label(c).css_classes(["suggestion"]).build();
-            let (buf, ms, me, text) = (buffer.clone(), m_start.clone(), m_end.clone(), c.clone());
-            btn.connect_clicked(move |_| {
-                let mut s = buf.iter_at_mark(&ms);
-                let mut e = buf.iter_at_mark(&me);
-                buf.begin_user_action();
-                buf.delete(&mut s, &mut e);
-                buf.insert(&mut s, &text);
-                buf.end_user_action();
-            });
-            fixes.insert(&btn, -1);
-        }
         if corrections.is_empty() {
-            b.append(&gtk::Label::builder().label(tr("No suggestions")).xalign(0.0).build());
+            body.append(&gtk::Label::builder().label(tr("No suggestions")).xalign(0.0).css_classes(["bubble-foot"]).build());
         } else {
-            b.append(&fixes);
+            let fixes = gtk::FlowBox::builder().selection_mode(gtk::SelectionMode::None).max_children_per_line(4).min_children_per_line(1).column_spacing(6).row_spacing(6).homogeneous(false).build();
+            for c in &corrections {
+                let btn = gtk::Button::builder().label(c).css_classes(["suggestion"]).build();
+                let (buf, ms, me, text) = (buffer.clone(), m_start.clone(), m_end.clone(), c.clone());
+                btn.connect_clicked(move |_| {
+                    let mut s = buf.iter_at_mark(&ms);
+                    let mut e = buf.iter_at_mark(&me);
+                    buf.begin_user_action();
+                    buf.delete(&mut s, &mut e);
+                    buf.insert(&mut s, &text);
+                    buf.end_user_action();
+                });
+                fixes.insert(&btn, -1);
+            }
+            body.append(&fixes);
         }
-        let actions = gtk::Box::builder().spacing(6).build();
-        let add = gtk::Button::builder().label(tr("Add to dictionary")).css_classes(["flat"]).build();
-        let ignore = gtk::Button::builder().label(tr("Ignore")).css_classes(["flat"]).build();
+        let actions = gtk::Box::builder().spacing(6).margin_top(2).build();
+        let add = gtk::Button::builder().label(tr("Add to dictionary")).css_classes(["flat", "bubble-action"]).build();
+        let ignore = gtk::Button::builder().label(tr("Ignore")).css_classes(["flat", "bubble-action"]).build();
         let (checker, ad, w) = (self.checker.clone(), adapter.clone(), word.clone());
         add.connect_clicked(move |_| {
             checker.add_word(&w);
@@ -787,8 +823,8 @@ impl Editor {
             crate::completion::KeyAt::Cite(k) => crate::hover::cite_bubble(k, data.index.bib.iter().find(|e| e.key == *k)).upcast(),
             crate::completion::KeyAt::Label(k) => {
                 let found = data.index.labels.iter().find(|l| l.name == *k).map(|l| {
-                    let description = describe_label(&self.root, &data.index, &l.file, l.line).unwrap_or_else(|| k.clone());
-                    (description, format!("{}:{}", l.file.display(), l.line))
+                    let (kind, description) = describe_label(&self.root, &data.index, &l.file, l.line);
+                    (kind, description.unwrap_or_else(|| k.clone()), format!("{}:{}", l.file.display(), l.line))
                 });
                 crate::hover::label_bubble(k, found).upcast()
             }
@@ -821,7 +857,7 @@ impl Editor {
                 (Some(i), None) => Some(Content::Ready(crate::hover::issues_bubble(&i).upcast())),
                 (None, Some(r)) => Some(Content::Ready(r)),
                 (Some(i), Some(r)) => {
-                    let b = gtk::Box::builder().orientation(gtk::Orientation::Vertical).spacing(10).build();
+                    let b = gtk::Box::builder().orientation(gtk::Orientation::Vertical).build();
                     b.append(&r);
                     b.append(&crate::hover::issues_bubble(&i));
                     Some(Content::Ready(b.upcast()))
@@ -1096,21 +1132,61 @@ impl Editor {
     }
 }
 
-/// Human description of a label: the section title or the nearby caption.
-fn describe_label(root: &Path, index: &crate::index::Index, file: &Path, line: u32) -> Option<String> {
+/// What a label belongs to and its human description: (kind, title).
+/// A section title, or the environment around it and its caption.
+fn describe_label(root: &Path, index: &crate::index::Index, file: &Path, line: u32) -> (&'static str, Option<String>) {
     if let Some(s) = index.outline.iter().find(|s| s.file == file && s.line.abs_diff(line) <= 1) {
-        return Some(s.title.clone());
+        let kind = match s.level {
+            0 => tr("Part"),
+            1 => tr("Chapter"),
+            2 => tr("Section"),
+            _ => tr("Subsection"),
+        };
+        return (kind, Some(s.title.clone()));
     }
-    let src = fs::read_to_string(root.join(file)).ok()?;
+    let Ok(src) = fs::read_to_string(root.join(file)) else { return (tr("Reference"), None) };
     let lines: Vec<&str> = src.lines().collect();
-    let from = (line as usize).saturating_sub(10);
-    let to = (line as usize + 3).min(lines.len());
-    lines[from..to].iter().rev().find_map(|l| {
+    let at = (line as usize).saturating_sub(1).min(lines.len().saturating_sub(1));
+    // The nearest enclosing environment above the label.
+    let mut kind = tr("Reference");
+    for l in lines[..=at].iter().rev().take(40) {
+        if let Some(env) = crate::index::calls(crate::project::strip_comment(l)).into_iter().rev().find(|c| c.name == "begin").and_then(|c| c.arg) {
+            kind = match env.trim_end_matches('*') {
+                "figure" | "subfigure" | "wrapfigure" => tr("Figure"),
+                "table" | "subtable" | "longtable" => tr("Table"),
+                "equation" | "align" | "gather" | "multline" | "eqnarray" => tr("Equation"),
+                "lstlisting" | "minted" | "verbatim" => tr("Code"),
+                "algorithm" | "algorithmic" => tr("Algorithm"),
+                "theorem" | "lemma" | "proposition" | "corollary" | "definition" => tr("Theorem"),
+                _ => continue,
+            };
+            break;
+        }
+    }
+    let from = at.saturating_sub(10);
+    let to = (at + 4).min(lines.len());
+    let caption = lines[from..to].iter().rev().find_map(|l| {
         crate::index::calls(crate::project::strip_comment(l))
             .into_iter()
             .find(|c| c.name == "caption")
             .and_then(|c| c.arg.map(crate::index::clean_title))
-    })
+    });
+    (kind, caption)
+}
+
+/// Files named by dropped text: `file://` URIs or absolute paths, one per
+/// line (terminals and some file managers drop paths as plain text).
+fn dropped_paths(text: &str) -> Vec<PathBuf> {
+    let lines: Vec<&str> = text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')).collect();
+    let paths: Vec<PathBuf> = lines
+        .iter()
+        .filter_map(|l| {
+            let l = l.trim_matches(['\'', '"']);
+            if l.starts_with("file://") { gio::File::for_uri(l).path() } else { l.starts_with('/').then(|| PathBuf::from(l)) }
+        })
+        .filter(|p| p.is_file())
+        .collect();
+    if paths.len() == lines.len() { paths } else { Vec::new() }
 }
 
 const MARK_ERROR: &str = "rutex-error";
@@ -1155,4 +1231,23 @@ fn write_atomic(path: &Path, data: &[u8]) -> std::io::Result<()> {
         let _ = fs::set_permissions(&tmp, meta.permissions());
     }
     fs::rename(&tmp, path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn paths_from_dropped_text() {
+        let dir = std::env::temp_dir().join(format!("rutex-drop-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let img = dir.join("my plot.png");
+        fs::write(&img, b"x").unwrap();
+        let uri = gio::File::for_path(&img).uri();
+        assert_eq!(dropped_paths(&format!("{uri}\r\n")), [img.clone()]);
+        assert_eq!(dropped_paths(&format!("'{}'", img.display())), [img.clone()]);
+        assert!(dropped_paths("some ordinary text").is_empty());
+        assert!(dropped_paths(&format!("{}\nhello", img.display())).is_empty(), "mixed text is just text");
+        fs::remove_dir_all(dir).unwrap();
+    }
 }

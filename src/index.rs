@@ -213,6 +213,7 @@ fn walk(root: &Path, rel: &Path, depth: usize, visited: &mut HashSet<PathBuf>, i
     let Ok(src) = fs::read_to_string(root.join(rel)) else { return };
     for (n, line) in src.lines().enumerate() {
         find_todo(line, rel, n as u32 + 1, index);
+        option_labels(line, rel, n as u32 + 1, index);
         let line = strip_comment(line);
         for call in calls(line) {
             scan_call(&call, rel, n as u32 + 1, index, true);
@@ -228,9 +229,29 @@ fn walk(root: &Path, rel: &Path, depth: usize, visited: &mut HashSet<PathBuf>, i
 fn scan(src: &str, rel: &Path, index: &mut Index, outline: bool) {
     for (n, line) in src.lines().enumerate() {
         find_todo(line, rel, n as u32 + 1, index);
+        option_labels(line, rel, n as u32 + 1, index);
         for call in calls(strip_comment(line)) {
             scan_call(&call, rel, n as u32 + 1, index, outline);
         }
+    }
+}
+
+/// Labels given as options: `\begin{lstlisting}[label={lst:rust}]`, `label=x`.
+fn option_labels(line: &str, rel: &Path, n: u32, index: &mut Index) {
+    let mut rest = strip_comment(line);
+    while let Some(i) = rest.find("label=").or_else(|| rest.find("label =")) {
+        // `\label{…}` is handled elsewhere; only key=value options here.
+        let after = rest[i..].split_once('=').map_or("", |x| x.1).trim_start();
+        let name: String = if let Some(braced) = after.strip_prefix('{') {
+            braced.chars().take_while(|c| *c != '}').collect()
+        } else {
+            after.chars().take_while(|c| !matches!(c, ',' | ']' | '}' | ' ')).collect()
+        };
+        let name = name.trim();
+        if !name.is_empty() && !index.labels.iter().any(|l| l.name == name) {
+            index.labels.push(Label { name: name.to_string(), file: rel.to_path_buf(), line: n });
+        }
+        rest = &rest[i + 6..];
     }
 }
 
@@ -395,6 +416,10 @@ mod tests {
         assert_eq!(idx.outline[1].file, PathBuf::from("cap/a.tex"));
         assert_eq!(idx.labels[0].name, "sec:dos");
         assert_eq!(idx.commands, ["R"]);
+        let mut li = Index::default();
+        option_labels("\\begin{lstlisting}[language=Rust, label={lst:rust}]", Path::new("a.tex"), 3, &mut li);
+        option_labels("\\begin{tcolorbox}[label=box:one]", Path::new("a.tex"), 4, &mut li);
+        assert_eq!(li.labels.iter().map(|l| l.name.as_str()).collect::<Vec<_>>(), ["lst:rust", "box:one"]);
         fs::remove_dir_all(dir).unwrap();
     }
 }
