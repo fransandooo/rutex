@@ -1,3 +1,4 @@
+mod check;
 mod compiler;
 mod completion;
 mod config;

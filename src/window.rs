@@ -44,6 +44,7 @@ pub fn set_accels(app: &adw::Application) {
         ("win.goto-line", &["<Ctrl>g"]),
         ("win.quick-open", &["<Ctrl>p"]),
         ("win.history", &["<Ctrl><Shift>h"]),
+        ("win.check", &["<Ctrl><Shift>r"]),
         ("win.save-version", &["<Ctrl><Shift>s"]),
         ("win.zoom-in", &["<Ctrl>plus", "<Ctrl>equal", "<Ctrl>KP_Add"]),
         ("win.zoom-out", &["<Ctrl>minus", "<Ctrl>KP_Subtract"]),
@@ -447,6 +448,7 @@ pub struct ProjectWindow {
     issues_stack: gtk::Stack,
     output: gtk::TextView,
     issues: RefCell<Vec<ShownIssue>>,
+    badboxes: RefCell<Vec<ShownIssue>>,
     compile: RefCell<CompileState>,
     autosave: RefCell<Option<glib::SourceId>>,
     pdf_mtime: Cell<Option<SystemTime>>,
@@ -500,6 +502,7 @@ impl ProjectWindow {
         s1.append(Some(tr("Use this file as main")), Some("win.set-main"));
         menu.append_section(None, &s1);
         let s2 = gio::Menu::new();
+        s2.append(Some(tr("Check before submitting…")), Some("win.check"));
         s2.append(Some(tr("Version history…")), Some("win.history"));
         s2.append(Some(tr("Save a version…")), Some("win.save-version"));
         s2.append(Some(tr("Save PDF to the project folder")), Some("win.export-pdf"));
@@ -712,6 +715,7 @@ impl ProjectWindow {
             issues_stack,
             output,
             issues: RefCell::default(),
+            badboxes: RefCell::default(),
             compile: RefCell::default(),
             autosave: RefCell::default(),
             pdf_mtime: Cell::new(None),
@@ -925,6 +929,7 @@ impl ProjectWindow {
         add("goto-line", Box::new(|t| t.goto_line_dialog()));
         add("quick-open", Box::new(|t| t.quick_open()));
         add("history", Box::new(|t| t.show_history()));
+        add("check", Box::new(|t| t.show_check()));
         add("save-version", Box::new(|t| t.save_version()));
         add("zoom-in", Box::new(|t| t.pdf.zoom(1)));
         add("zoom-out", Box::new(|t| t.pdf.zoom(-1)));
@@ -1398,6 +1403,8 @@ impl ProjectWindow {
                 message: i.message,
             })
             .collect();
+        let (badboxes, shown): (Vec<ShownIssue>, Vec<ShownIssue>) = shown.into_iter().partition(|i| i.severity == Severity::Badbox);
+        *self.badboxes.borrow_mut() = badboxes;
         let errors = shown.iter().filter(|i| i.severity == Severity::Error).count();
         let warnings = shown.len() - errors;
         self.fill_issues(&shown);
@@ -1492,7 +1499,7 @@ impl ProjectWindow {
         for issue in issues {
             let (icon, class) = match issue.severity {
                 Severity::Error => ("dialog-error-symbolic", "error"),
-                Severity::Warning => ("dialog-warning-symbolic", "warning"),
+                Severity::Warning | Severity::Badbox => ("dialog-warning-symbolic", "warning"),
             };
             let row = gtk::Box::builder().spacing(8).margin_start(6).margin_end(6).build();
             row.append(&gtk::Image::builder().icon_name(icon).css_classes([class]).build());
@@ -1535,6 +1542,67 @@ impl ProjectWindow {
                 None => this.toast(tr("SyncTeX could not find that line in the PDF")),
             }
         });
+    }
+
+    /// "Check before submitting" window, from the last build and the index.
+    fn show_check(self: &Rc<Self>) {
+        let groups = {
+            let issues = self.issues.borrow();
+            let badboxes = self.badboxes.borrow();
+            let warnings: Vec<crate::check::Logged> = issues.iter().map(|i| (i.message.as_str(), i.file.clone(), i.line)).collect();
+            let boxes: Vec<crate::check::Logged> = badboxes.iter().map(|i| (i.message.as_str(), i.file.clone(), i.line)).collect();
+            crate::check::build(&self.data.borrow().index, &warnings, &boxes)
+        };
+        let total: usize = groups.iter().map(|g| g.items.len()).sum();
+
+        let page = adw::PreferencesPage::new();
+        let dialog = adw::Dialog::builder().title(tr("Check before submitting")).content_width(640).content_height(640).build();
+        if total == 0 {
+            let ok = adw::StatusPage::builder()
+                .icon_name("emblem-ok-symbolic")
+                .title(tr("Ready to submit"))
+                .description(tr("No undefined references, unused labels or citations, margin overflows or to-do notes."))
+                .build();
+            let group = adw::PreferencesGroup::new();
+            group.add(&ok);
+            page.add(&group);
+        } else {
+            let intro = adw::PreferencesGroup::builder().description(tr("Based on the last build. Click an item to go to it.")).build();
+            page.add(&intro);
+        }
+        for g in groups.iter().filter(|g| !g.items.is_empty()) {
+            let group = adw::PreferencesGroup::builder().title(format!("{} ({})", tr(g.title), g.items.len())).build();
+            for item in g.items.iter().take(200) {
+                let location = match (&item.file, item.line) {
+                    (Some(f), Some(l)) => format!("{}:{l}", f.display()),
+                    (Some(f), None) => f.display().to_string(),
+                    _ => String::new(),
+                };
+                let row = adw::ActionRow::builder()
+                    .title(glib::markup_escape_text(&item.text))
+                    .subtitle(glib::markup_escape_text(&location))
+                    .activatable(item.file.is_some())
+                    .build();
+                row.add_prefix(&gtk::Image::from_icon_name(g.icon));
+                if let Some(file) = item.file.clone() {
+                    let line = item.line.unwrap_or(1);
+                    let (weak, dlg) = (Rc::downgrade(self), dialog.clone());
+                    row.connect_activated(move |_| {
+                        dlg.close();
+                        if let Some(this) = weak.upgrade() {
+                            this.goto(&file, line);
+                        }
+                    });
+                }
+                group.add(&row);
+            }
+            page.add(&group);
+        }
+        let toolbar = adw::ToolbarView::new();
+        toolbar.add_top_bar(&adw::HeaderBar::new());
+        toolbar.set_content(Some(&page));
+        dialog.set_child(Some(&toolbar));
+        dialog.present(Some(&self.window));
     }
 
     /// Automatic version after a good build, at most every 5 minutes.

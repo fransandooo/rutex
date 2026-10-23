@@ -51,6 +51,24 @@ pub struct Index {
     pub bib: Vec<BibEntry>,
     /// Comandos definidos por el usuario (`\newcommand{\R}`…), sin la barra.
     pub commands: Vec<String>,
+    /// Keys used in \ref-like commands, with where.
+    pub refs_used: Vec<Located>,
+    /// Keys used in \cite-like commands, with where.
+    pub cites_used: Vec<Located>,
+    /// `\nocite{*}` cites the whole bibliography.
+    pub nocite_all: bool,
+    /// Labels defined more than once (every definition).
+    pub duplicate_labels: Vec<Label>,
+    /// TODO / FIXME comments and \todo{} notes.
+    pub todos: Vec<Located>,
+}
+
+/// A key or note and where it appears.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Located {
+    pub text: String,
+    pub file: PathBuf,
+    pub line: u32,
 }
 
 /// Una llamada a comando encontrada en una línea: `\nombre*[opt]{arg}`.
@@ -176,6 +194,12 @@ pub fn build(root: &Path, main: &Path, all_files: &[PathBuf]) -> Index {
         }
     }
     index.labels.sort_by(|a, b| a.name.cmp(&b.name));
+    index.duplicate_labels = index
+        .labels
+        .iter()
+        .filter(|l| index.labels.iter().filter(|o| o.name == l.name).count() > 1)
+        .cloned()
+        .collect();
     index.labels.dedup_by(|a, b| a.name == b.name);
     index.commands.sort();
     index.commands.dedup();
@@ -188,6 +212,7 @@ fn walk(root: &Path, rel: &Path, depth: usize, visited: &mut HashSet<PathBuf>, i
     }
     let Ok(src) = fs::read_to_string(root.join(rel)) else { return };
     for (n, line) in src.lines().enumerate() {
+        find_todo(line, rel, n as u32 + 1, index);
         let line = strip_comment(line);
         for call in calls(line) {
             scan_call(&call, rel, n as u32 + 1, index, true);
@@ -202,9 +227,24 @@ fn walk(root: &Path, rel: &Path, depth: usize, visited: &mut HashSet<PathBuf>, i
 
 fn scan(src: &str, rel: &Path, index: &mut Index, outline: bool) {
     for (n, line) in src.lines().enumerate() {
+        find_todo(line, rel, n as u32 + 1, index);
         for call in calls(strip_comment(line)) {
             scan_call(&call, rel, n as u32 + 1, index, outline);
         }
+    }
+}
+
+/// `% TODO: …`, `% FIXME …` and `\todo{…}`.
+fn find_todo(line: &str, rel: &Path, n: u32, index: &mut Index) {
+    let code = strip_comment(line);
+    let comment = &line[code.len()..];
+    let note = if let Some(i) = comment.find("TODO").or_else(|| comment.find("FIXME")) {
+        Some(comment[i..].trim().to_string())
+    } else {
+        calls(code).into_iter().find(|c| c.name == "todo").and_then(|c| c.arg).map(|a| format!("\\todo: {}", clean_title(a)))
+    };
+    if let Some(text) = note {
+        index.todos.push(Located { text, file: rel.to_path_buf(), line: n });
     }
 }
 
@@ -212,6 +252,18 @@ fn scan_call(call: &Call, rel: &Path, line: u32, index: &mut Index, outline: boo
     let Some(arg) = call.arg else { return };
     if outline && let Some((_, level)) = SECTIONS.iter().find(|(n, _)| *n == call.name) {
         index.outline.push(Section { level: *level, title: clean_title(arg), file: rel.to_path_buf(), line });
+    } else if crate::completion::REF_COMMANDS.contains(&call.name) {
+        for key in arg.split(',').map(str::trim).filter(|k| !k.is_empty()) {
+            index.refs_used.push(Located { text: key.to_string(), file: rel.to_path_buf(), line });
+        }
+    } else if crate::completion::CITE_COMMANDS.contains(&call.name) {
+        for key in arg.split(',').map(str::trim).filter(|k| !k.is_empty()) {
+            if key == "*" {
+                index.nocite_all = true;
+            } else {
+                index.cites_used.push(Located { text: key.to_string(), file: rel.to_path_buf(), line });
+            }
+        }
     } else if call.name == "label" {
         index.labels.push(Label { name: arg.trim().to_string(), file: rel.to_path_buf(), line });
     } else if matches!(call.name, "newcommand" | "renewcommand" | "DeclareMathOperator" | "providecommand") {

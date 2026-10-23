@@ -7,6 +7,9 @@
 pub enum Severity {
     Error,
     Warning,
+    /// "Overfull \hbox": text sticking into the margin. Kept out of the
+    /// problems panel (there are usually many) and shown in the submission check.
+    Badbox,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -43,6 +46,15 @@ pub fn parse(log: &str) -> Vec<Issue> {
             }
             let file = stack.iter().rev().find_map(|f| f.clone());
             push(&mut issues, Issue { severity: Severity::Error, file, line: ln, message });
+        } else if let Some(rest) = line.strip_prefix("Overfull \\hbox (").or_else(|| line.strip_prefix("Overfull \\vbox (")) {
+            let pts: f64 = rest.split("pt").next().and_then(|p| p.trim().parse().ok()).unwrap_or(0.0);
+            let ln = line.rfind("at lines ").map(|i| &line[i + 9..]).or_else(|| line.rfind("at line ").map(|i| &line[i + 8..])).and_then(|l| l.chars().take_while(char::is_ascii_digit).collect::<String>().parse().ok());
+            // Below one point is invisible in print.
+            if pts >= 1.0 {
+                let file = stack.iter().rev().find_map(|f| f.clone());
+                let kind = if line.contains("vbox") { "Overfull \\vbox" } else { "Overfull \\hbox" };
+                push(&mut issues, Issue { severity: Severity::Badbox, file, line: ln, message: format!("{kind} ({pts:.1}pt)") });
+            }
         } else if let Some(start) = warning_start(line) {
             let mut message = line[start..].trim().to_string();
             // Continuaciones: "(paquete)    texto…"
@@ -217,6 +229,15 @@ Package hyperref Warning: Token not allowed in a PDF string (Unicode):
 
         assert_eq!(warnings[2].line, Some(12));
         assert!(warnings[2].message.contains("removing `math shift'"));
+    }
+
+    #[test]
+    fn parses_overfull_boxes() {
+        let log = "(./main.tex\nOverfull \\hbox (12.5pt too wide) in paragraph at lines 10--12\n[]\\T1/cmr/m/n/10 text\nOverfull \\hbox (0.2pt too wide) detected at line 30\n)";
+        let i = parse(log);
+        assert_eq!(i.len(), 1, "tiny overfull boxes are ignored: {i:?}");
+        assert_eq!((i[0].severity, i[0].line, i[0].file.as_deref()), (Severity::Badbox, Some(10), Some("./main.tex")));
+        assert_eq!(i[0].message, "Overfull \\hbox (12.5pt)");
     }
 
     #[test]

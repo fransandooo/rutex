@@ -389,6 +389,17 @@ const TABLE: &[(&str, &str)] = &[
     ("Replaced {} occurrences in {} files", "Reemplazadas {} apariciones en {} archivos"),
     ("Could not replace: {}", "No se pudo reemplazar: {}"),
     ("Find in project", "Buscar en el proyecto"),
+    ("Check before submitting…", "Revisar antes de entregar…"),
+    ("Check before submitting", "Revisar antes de entregar"),
+    ("Ready to submit", "Listo para entregar"),
+    ("No undefined references, unused labels or citations, margin overflows or to-do notes.", "Ni referencias sin definir, ni etiquetas o citas sin usar, ni texto que se sale del margen, ni notas pendientes."),
+    ("Based on the last build. Click an item to go to it.", "Según la última compilación. Pulsa un elemento para ir a él."),
+    ("Undefined references and citations", "Referencias y citas sin definir"),
+    ("Labels never referenced", "Etiquetas que nunca se referencian"),
+    ("Labels defined more than once", "Etiquetas definidas más de una vez"),
+    ("Bibliography entries never cited", "Entradas de la bibliografía sin citar"),
+    ("Text sticking into the margin", "Texto que se sale del margen"),
+    ("To-do notes", "Notas pendientes"),
 ];
 
 #[cfg(test)]

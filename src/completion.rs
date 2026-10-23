@@ -260,8 +260,8 @@ const PACKAGES: &[&str] = &[
     "tocloft", "appendix", "acronym", "glossaries", "pdfpages", "wrapfig", "fontspec", "unicode-math", "polyglossia",
 ];
 
-const REF_COMMANDS: &[&str] = &["ref", "eqref", "autoref", "cref", "Cref", "pageref", "nameref", "vref"];
-const CITE_COMMANDS: &[&str] = &[
+pub const REF_COMMANDS: &[&str] = &["ref", "eqref", "autoref", "cref", "Cref", "pageref", "nameref", "vref"];
+pub const CITE_COMMANDS: &[&str] = &[
     "cite", "citep", "citet", "parencite", "textcite", "autocite", "footcite", "nocite", "citeauthor", "citeyear",
     "fullcite", "smartcite",
 ];
