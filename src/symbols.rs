@@ -188,10 +188,19 @@ pub fn show(parent: &impl IsA<gtk::Widget>, on_pick: impl Fn(&'static str) + 'st
     });
 
     let content = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    let tip = gtk::Label::builder()
+        .label(tr("Tip: inside a formula, @a types \\alpha, @8 \\infty, @/ a fraction… and BEQ + Tab writes an equation (also BAL, BIT, BEN, BFI, BTA, BCAS)."))
+        .wrap(true)
+        .xalign(0.0)
+        .margin_start(14)
+        .margin_end(14)
+        .css_classes(["dim-label", "caption"])
+        .build();
     let top = gtk::Box::builder().margin_start(14).margin_end(14).margin_top(4).build();
     search.set_hexpand(true);
     top.append(&search);
     content.append(&top);
+    content.append(&tip);
     content.append(&gtk::ScrolledWindow::builder().child(&sections).vexpand(true).hscrollbar_policy(gtk::PolicyType::Never).build());
     let toolbar = adw::ToolbarView::new();
     toolbar.add_top_bar(&adw::HeaderBar::new());

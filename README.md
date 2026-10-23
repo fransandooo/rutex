@@ -35,6 +35,15 @@ The interface is in English by default, and Spanish is available in Preferences.
 - **Hover a `\ref` or `\cite`** to see what it points to (the caption, section title or entry),
   and **Ctrl+click** it to go to the `\label` or the `.bib` entry.
 - **Find and replace in the whole project** (`Ctrl+Shift+F`).
+- **Formula preview on hover**, rendered with your own preamble and macros.
+- **Drag an image** onto the editor to get a complete `figure` (the file is copied into the
+  project), and **paste cells from a spreadsheet** to get a `table`; or use Insert → Table from
+  CSV.
+- **References by DOI or arXiv id**: paste it, and the entry is added to your `.bib` and cited.
+  **Zotero** (with Better BibTeX) works too.
+- **Symbol palette** (`Ctrl+Shift+M`) with search, and quick snippets: inside a formula `@a` →
+  `\alpha`, `@8` → `\infty`, `@/` → a fraction; `BEQ` + `Tab` → an equation (also `BAL`, `BIT`,
+  `BEN`, `BFI`, `BTA`, `BCAS`…).
 - **Words per chapter** and an optional word goal, from the status bar.
 - **Optional Vim mode**.
 

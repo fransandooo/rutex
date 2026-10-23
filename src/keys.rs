@@ -9,6 +9,7 @@ use std::rc::Rc;
 
 use gtk::prelude::*;
 use gtk::{gdk, glib};
+use sourceview5::prelude::ViewManualExt;
 
 /// Opciones que se pueden cambiar en caliente desde las preferencias.
 #[derive(Default)]
@@ -18,6 +19,7 @@ pub struct Options {
 }
 
 pub fn install(view: &sourceview5::View, options: Rc<Options>) {
+    VIEWS.with(|v| v.borrow_mut().push(view.downgrade()));
     let keys = gtk::EventControllerKey::new();
     keys.set_propagation_phase(gtk::PropagationPhase::Capture);
     let weak = view.downgrade();
@@ -45,6 +47,8 @@ pub fn install(view: &sourceview5::View, options: Rc<Options>) {
         } else if !ctrl && !alt && !options.vim.get() {
             match keyval {
                 gdk::Key::Return | gdk::Key::KP_Enter if !shift => close_environment(&buffer),
+                gdk::Key::Tab if !shift => expand_trigger(&view),
+                _ if at_snippet(&buffer, keyval) => true,
                 _ if options.autopairs.get() => autopair(&buffer, keyval),
                 _ => false,
             }
@@ -212,6 +216,100 @@ fn close_environment(buffer: &gtk::TextBuffer) -> bool {
     true
 }
 
+/// `@` + key inside a formula → command (LaTeX Workshop style).
+pub const AT_SNIPPETS: &[(char, &str)] = &[
+    ('a', "\\alpha"), ('b', "\\beta"), ('g', "\\gamma"), ('d', "\\delta"), ('e', "\\epsilon"), ('z', "\\zeta"),
+    ('h', "\\eta"), ('q', "\\theta"), ('i', "\\iota"), ('k', "\\kappa"), ('l', "\\lambda"), ('m', "\\mu"),
+    ('n', "\\nu"), ('x', "\\xi"), ('p', "\\pi"), ('r', "\\rho"), ('s', "\\sigma"), ('t', "\\tau"),
+    ('u', "\\upsilon"), ('f', "\\phi"), ('c', "\\chi"), ('y', "\\psi"), ('w', "\\omega"), ('G', "\\Gamma"),
+    ('D', "\\Delta"), ('Q', "\\Theta"), ('L', "\\Lambda"), ('X', "\\Xi"), ('P', "\\Pi"), ('S', "\\Sigma"),
+    ('U', "\\Upsilon"), ('F', "\\Phi"), ('Y', "\\Psi"), ('W', "\\Omega"), ('8', "\\infty"), ('6', "\\partial"),
+    ('<', "\\leq"), ('>', "\\geq"), ('=', "\\equiv"), ('+', "\\sum"), ('I', "\\int"), ('.', "\\cdot"),
+    ('*', "\\times"), ('-', "\\setminus"), ('0', "\\emptyset"), ('/', "\\frac{${1}}{${2}}$0"), ('^', "\\hat{${1}}$0"),
+    ('_', "\\bar{${1}}$0"), ('(', "\\left( ${1} \\right)$0"), ('[', "\\left[ ${1} \\right]$0"),
+];
+
+/// Word + Tab → environment.
+pub const TAB_TRIGGERS: &[(&str, &str)] = &[
+    ("BEQ", "\\begin{equation}\n\t${1}\n\t\\label{eq:${2}}\n\\end{equation}$0"),
+    ("BSEQ", "\\begin{equation*}\n\t${1}\n\\end{equation*}$0"),
+    ("BAL", "\\begin{align}\n\t${1}\n\\end{align}$0"),
+    ("BSAL", "\\begin{align*}\n\t${1}\n\\end{align*}$0"),
+    ("BGA", "\\begin{gather}\n\t${1}\n\\end{gather}$0"),
+    ("BCAS", "\\begin{cases}\n\t${1} & ${2} \\\\\n\\end{cases}$0"),
+    ("BIT", "\\begin{itemize}\n\t\\item ${1}\n\\end{itemize}$0"),
+    ("BEN", "\\begin{enumerate}\n\t\\item ${1}\n\\end{enumerate}$0"),
+    ("BDE", "\\begin{description}\n\t\\item[${1}] ${2}\n\\end{description}$0"),
+    ("BFI", "\\begin{figure}[htbp]\n\t\\centering\n\t\\includegraphics[width=0.8\\linewidth]{${1}}\n\t\\caption{${2}}\n\t\\label{fig:${3}}\n\\end{figure}$0"),
+    ("BTA", "\\begin{table}[htbp]\n\t\\centering\n\t\\caption{${1}}\n\t\\label{tab:${2}}\n\t\\begin{tabular}{${3:lcr}}\n\t\t${4}\n\t\\end{tabular}\n\\end{table}$0"),
+    ("BTH", "\\begin{theorem}\n\t${1}\n\\end{theorem}$0"),
+    ("BPR", "\\begin{proof}\n\t${1}\n\\end{proof}$0"),
+    ("BFR", "\\begin{frame}{${1}}\n\t${2}\n\\end{frame}$0"),
+];
+
+/// Expands a snippet replacing `len` characters before the cursor.
+fn push_snippet(view: &sourceview5::View, len: i32, snippet: &str) {
+    let buffer = view.buffer();
+    let mut end = cursor(&buffer);
+    let mut start = end;
+    start.backward_chars(len);
+    buffer.begin_user_action();
+    buffer.delete(&mut start, &mut end);
+    // In snippets a backslash escapes the next character: double them.
+    let parsed = sourceview5::Snippet::new_parsed(&snippet.replace('\\', "\\\\")).unwrap_or_else(|_| sourceview5::Snippet::new(None, None));
+    view.push_snippet(&parsed, Some(&mut start));
+    buffer.end_user_action();
+}
+
+/// `BEQ` + Tab → equation environment (only when the word is a trigger).
+fn expand_trigger(view: &sourceview5::View) -> bool {
+    let buffer = view.buffer();
+    let it = cursor(&buffer);
+    let mut start = it;
+    start.set_line_offset(0);
+    let before = buffer.text(&start, &it, false).to_string();
+    let word: String = before.chars().rev().take_while(|c| c.is_ascii_uppercase()).collect::<Vec<_>>().into_iter().rev().collect();
+    let rest = &before[..before.len() - word.len()];
+    if !(rest.is_empty() || rest.ends_with(char::is_whitespace)) {
+        return false;
+    }
+    let Some((_, snippet)) = TAB_TRIGGERS.iter().find(|(t, _)| *t == word) else { return false };
+    push_snippet(view, word.chars().count() as i32, snippet);
+    true
+}
+
+/// `@a` inside a formula → `\\alpha` as soon as the second key is typed.
+fn at_snippet(buffer: &gtk::TextBuffer, keyval: gdk::Key) -> bool {
+    let Some(typed) = keyval.to_unicode() else { return false };
+    let Some((_, cmd)) = AT_SNIPPETS.iter().find(|(c, _)| *c == typed) else { return false };
+    let it = cursor(buffer);
+    let mut prev = it;
+    if !prev.backward_char() || prev.char() != '@' {
+        return false;
+    }
+    let (s, e) = buffer.bounds();
+    if crate::mathpreview::math_at(&buffer.text(&s, &e, false), it.offset() as usize).is_none() {
+        return false;
+    }
+    let Some(view) = buffer_view(buffer) else { return false };
+    let snippet = if cmd.contains('$') { cmd.to_string() } else { format!("{cmd} ") };
+    push_snippet(&view, 1, &snippet);
+    true
+}
+
+thread_local! {
+    static VIEWS: std::cell::RefCell<Vec<glib::WeakRef<sourceview5::View>>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// The view showing a buffer (each buffer has exactly one view here).
+fn buffer_view(buffer: &gtk::TextBuffer) -> Option<sourceview5::View> {
+    VIEWS.with(|v| {
+        let mut v = v.borrow_mut();
+        v.retain(|w| w.upgrade().is_some());
+        v.iter().filter_map(|w| w.upgrade()).find(|view| view.buffer() == *buffer)
+    })
+}
+
 /// `  \begin{figure}[htbp]` → `figure`.
 pub fn begun_environment(before: &str) -> Option<String> {
     let start = before.rfind("\\begin{")? + "\\begin{".len();
@@ -340,5 +438,38 @@ mod tests {
         assert_eq!(text(), "x ");
         set("50", 2);
         assert!(!autopair(&buf, gdk::Key::dollar));
+    }
+
+    /// Snippets on a real view: `BEQ` + Tab and `@a` inside a formula.
+    #[test]
+    fn snippets() {
+        if gtk::init().is_err() {
+            return;
+        }
+        let buffer = sourceview5::Buffer::new(None);
+        let view = sourceview5::View::with_buffer(&buffer);
+        install(&view, Rc::new(Options::default()));
+        let text = || {
+            let (s, e) = buffer.bounds();
+            buffer.text(&s, &e, false).to_string()
+        };
+
+        buffer.set_text("BEQ");
+        buffer.place_cursor(&buffer.end_iter());
+        assert!(expand_trigger(&view));
+        assert!(text().starts_with("\\begin{equation}\n"), "{}", text());
+
+        buffer.set_text("so BITE");
+        buffer.place_cursor(&buffer.end_iter());
+        assert!(!expand_trigger(&view), "only exact triggers");
+
+        buffer.set_text("$x = @$");
+        buffer.place_cursor(&buffer.iter_at_offset(6));
+        assert!(at_snippet(buffer.upcast_ref(), gdk::Key::a));
+        assert_eq!(text(), "$x = \\alpha $");
+
+        buffer.set_text("mail me@a");
+        buffer.place_cursor(&buffer.end_iter());
+        assert!(!at_snippet(buffer.upcast_ref(), gdk::Key::b), "not outside formulas");
     }
 }

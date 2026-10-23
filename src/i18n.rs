@@ -460,6 +460,7 @@ const TABLE: &[(&str, &str)] = &[
     ("Sets and logic", "Conjuntos y lógica"),
     ("Accents and fonts", "Acentos y tipos de letra"),
     ("Delimiters and dots", "Delimitadores y puntos"),
+    ("Tip: inside a formula, @a types \\alpha, @8 \\infty, @/ a fraction… and BEQ + Tab writes an equation (also BAL, BIT, BEN, BFI, BTA, BCAS).", "Truco: dentro de una fórmula, @a escribe \\alpha, @8 \\infty, @/ una fracción… y BEQ + Tab escribe una ecuación (también BAL, BIT, BEN, BFI, BTA, BCAS)."),
 ];
 
 #[cfg(test)]
