@@ -551,6 +551,10 @@ impl ProjectWindow {
             (tr("Version history…"), "win.history"),
             (tr("Save a version…"), "win.save-version"),
         ]);
+        section(tr("Insert"), &[
+            (tr("Image…"), "win.insert-image"),
+            (tr("Table from CSV…"), "win.insert-csv"),
+        ]);
         section(tr("PDF"), &[
             (tr("Fullscreen PDF"), "win.pdf-fullscreen"),
             (tr("Save PDF to the project folder"), "win.export-pdf"),
@@ -755,6 +759,7 @@ impl ProjectWindow {
 
         let math = crate::mathpreview::MathPreview::new(project.root.clone(), &project.build_dir);
         editor.set_math_preview(math.clone());
+        editor.set_main(&project.main);
         let history = crate::history::git_available().then(|| Arc::new(History::for_project(&project.root, &project.build_dir)));
         let window = adw::ApplicationWindow::builder()
             .application(app)
@@ -874,6 +879,13 @@ impl ProjectWindow {
                 let cmd = this.install_command.borrow().clone();
                 this.window.clipboard().set_text(&cmd);
                 this.toast(&trf("Copied: {} — paste it in a terminal, then compile again", &[&cmd]));
+            }
+        });
+
+        let weak = Rc::downgrade(self);
+        self.editor.connect_message(move |msg| {
+            if let Some(this) = weak.upgrade() {
+                this.toast(msg);
             }
         });
 
@@ -1023,6 +1035,8 @@ impl ProjectWindow {
         add("quick-open", Box::new(|t| t.quick_open()));
         add("history", Box::new(|t| t.show_history()));
         add("check", Box::new(|t| t.show_check()));
+        add("insert-image", Box::new(|t| t.pick_and_insert(true)));
+        add("insert-csv", Box::new(|t| t.pick_and_insert(false)));
         add("save-version", Box::new(|t| t.save_version()));
         add("zoom-in", Box::new(|t| t.pdf.zoom(1)));
         add("zoom-out", Box::new(|t| t.pdf.zoom(-1)));
@@ -1691,6 +1705,43 @@ impl ProjectWindow {
         });
     }
 
+    /// File chooser for "Insert image…" / "Insert table from CSV…".
+    fn pick_and_insert(self: &Rc<Self>, image: bool) {
+        if self.editor.current_view().is_none() {
+            self.toast(tr("Open a .tex file first"));
+            return;
+        }
+        let filter = gtk::FileFilter::new();
+        if image {
+            filter.set_name(Some(tr("Images")));
+            for ext in crate::insert::IMAGE_EXTS {
+                filter.add_suffix(ext);
+            }
+        } else {
+            filter.set_name(Some("CSV"));
+            for ext in ["csv", "tsv", "txt"] {
+                filter.add_suffix(ext);
+            }
+        }
+        let filters = gio::ListStore::new::<gtk::FileFilter>();
+        filters.append(&filter);
+        let dialog = gtk::FileDialog::builder().title(if image { tr("Insert image") } else { tr("Insert table from CSV") }).filters(&filters).modal(true).build();
+        let weak = Rc::downgrade(self);
+        dialog.open(Some(&self.window), gio::Cancellable::NONE, move |res| {
+            let (Some(this), Some(path)) = (weak.upgrade(), res.ok().and_then(|f| f.path())) else { return };
+            if image {
+                if let Some(view) = this.editor.current_view() {
+                    this.editor.insert_files(&view, &[path], None);
+                }
+            } else {
+                let ok = fs::read_to_string(&path).map(|csv| this.editor.insert_csv(&csv)).unwrap_or(false);
+                if !ok {
+                    this.toast(tr("That file does not look like a table (same number of columns in every row)"));
+                }
+            }
+        });
+    }
+
     /// "Check before submitting" window, from the last build and the index.
     fn show_check(self: &Rc<Self>) {
         let groups = {
@@ -2010,6 +2061,7 @@ impl ProjectWindow {
             p.root.clone()
         };
         config::update(|c| c.set_main(root, rel.clone()));
+        self.editor.set_main(&rel);
         self.pdf_mtime.set(None);
         self.tree.set_main(rel.clone());
         self.toast(&trf("Main file: {}", &[&rel.display()]));

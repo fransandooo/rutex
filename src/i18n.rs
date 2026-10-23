@@ -423,6 +423,18 @@ const TABLE: &[(&str, &str)] = &[
     ("Add to dictionary", "Añadir al diccionario"),
     ("Ignore", "Ignorar"),
     ("Could not render the formula: {}", "No se pudo dibujar la fórmula: {}"),
+    ("Caption", "Pie de figura"),
+    ("Could not copy the image: {}", "No se pudo copiar la imagen: {}"),
+    ("Pasted cells turned into a table (Ctrl+Z to undo)", "Celdas pegadas convertidas en tabla (Ctrl+Z para deshacer)"),
+    ("Pasted cells turned into a table; add \\usepackage{booktabs} for nicer rules (Ctrl+Z to undo)", "Celdas pegadas convertidas en tabla; añade \\usepackage{booktabs} para líneas más bonitas (Ctrl+Z para deshacer)"),
+    ("Insert", "Insertar"),
+    ("Image…", "Imagen…"),
+    ("Table from CSV…", "Tabla desde CSV…"),
+    ("Open a .tex file first", "Abre primero un archivo .tex"),
+    ("Images", "Imágenes"),
+    ("Insert image", "Insertar imagen"),
+    ("Insert table from CSV", "Insertar tabla desde CSV"),
+    ("That file does not look like a table (same number of columns in every row)", "Ese archivo no parece una tabla (todas las filas con el mismo número de columnas)"),
 ];
 
 #[cfg(test)]

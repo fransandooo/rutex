@@ -11,6 +11,7 @@ mod historyview;
 mod hover;
 mod i18n;
 mod index;
+mod insert;
 mod keys;
 mod logparse;
 mod mathpreview;

@@ -51,6 +51,9 @@ pub struct Editor {
     key_options: Rc<keys::Options>,
     checker: libspelling::Checker,
     math: RefCell<Option<Rc<crate::mathpreview::MathPreview>>>,
+    /// Main file (relative), for figure folders and the preamble.
+    main: RefCell<PathBuf>,
+    on_message: RefCell<Option<Box<dyn Fn(&str)>>>,
     /// Problemas de la última compilación por archivo: (línea, es_error, mensaje).
     issues: RefCell<HashMap<PathBuf, Vec<(u32, bool, String)>>>,
     error_attrs: sourceview5::MarkAttributes,
@@ -113,6 +116,8 @@ impl Editor {
             warning_attrs: sourceview5::MarkAttributes::builder().icon_name("dialog-warning-symbolic").build(),
             checker: libspelling::Checker::default(),
             math: RefCell::default(),
+            main: RefCell::default(),
+            on_message: RefCell::default(),
             key_options: Rc::new(keys::Options { autopairs: Cell::new(config::get().autopairs), vim: Cell::new(config::get().vim) }),
             docs: RefCell::default(),
             on_change: RefCell::default(),
@@ -356,6 +361,33 @@ impl Editor {
             adapter.set_enabled(cfg.spellcheck);
             adapter
         });
+        // Images and .tex files dropped onto the editor.
+        let drop = gtk::DropTarget::new(gtk::gdk::FileList::static_type(), gtk::gdk::DragAction::COPY);
+        let (weak, v) = (Rc::downgrade(self), view.downgrade());
+        drop.connect_drop(move |_, value, x, y| {
+            let (Some(this), Some(view), Ok(list)) = (weak.upgrade(), v.upgrade(), value.get::<gtk::gdk::FileList>()) else { return false };
+            let files: Vec<PathBuf> = list.files().iter().filter_map(|f| f.path()).collect();
+            let (bx, by) = view.window_to_buffer_coords(gtk::TextWindowType::Widget, x as i32, y as i32);
+            let Some(iter) = view.iter_at_location(bx, by) else { return false };
+            this.insert_files(&view, &files, Some(iter.offset()))
+        });
+        view.add_controller(drop);
+
+        // Cells pasted from a spreadsheet become a LaTeX table (Ctrl+Z undoes it).
+        if lang == Some("rutex-latex") {
+            let start = Rc::new(Cell::new(0));
+            let s = start.clone();
+            view.connect_paste_clipboard(move |v| {
+                let b = v.buffer();
+                s.set(b.iter_at_mark(&b.get_insert()).offset());
+            });
+            let weak = Rc::downgrade(self);
+            buffer.connect_paste_done(move |b, _| {
+                let Some(this) = weak.upgrade() else { return };
+                this.tableize_paste(b.upcast_ref(), start.get());
+            });
+        }
+
         // Change bars in the margin, right after the line numbers.
         let bar = crate::changebar::ChangeBar::default();
         bar.refresh_colors();
@@ -470,6 +502,136 @@ impl Editor {
             doc.bar.refresh_colors();
         }
         self.color_marks();
+    }
+
+    pub fn set_main(&self, main: &Path) {
+        *self.main.borrow_mut() = main.to_path_buf();
+    }
+
+    /// Short notices for the window to show (e.g. "table converted").
+    pub fn connect_message(&self, f: impl Fn(&str) + 'static) {
+        *self.on_message.borrow_mut() = Some(Box::new(f));
+    }
+
+    fn message(&self, msg: &str) {
+        if let Some(cb) = self.on_message.borrow().as_ref() {
+            cb(msg);
+        }
+    }
+
+    fn main_src(&self) -> String {
+        fs::read_to_string(self.root.join(&*self.main.borrow())).unwrap_or_default()
+    }
+
+    /// Inserts images (as figure environments) and .tex files (as \\input) at
+    /// `offset`, or at the cursor. Returns whether anything was inserted.
+    pub fn insert_files(&self, view: &sourceview5::View, files: &[PathBuf], offset: Option<i32>) -> bool {
+        let buffer = view.buffer();
+        let main_src = self.main_src();
+        let mut iter = match offset {
+            Some(o) => buffer.iter_at_offset(o),
+            None => buffer.iter_at_mark(&buffer.get_insert()),
+        };
+        // Insert on a line of its own, after the line where the drop happened.
+        let mut line_start = iter;
+        line_start.set_line_offset(0);
+        let line_text = {
+            let mut e = line_start;
+            if !e.ends_line() {
+                e.forward_to_line_end();
+            }
+            buffer.text(&line_start, &e, false).to_string()
+        };
+        let indent: String = line_text.chars().take_while(|c| c.is_whitespace()).collect();
+        if !iter.ends_line() {
+            iter.forward_to_line_end();
+        }
+        let mut pieces: Vec<(String, Option<&'static str>)> = Vec::new();
+        for file in files {
+            if crate::insert::is_image(file) {
+                match crate::insert::import_image(&self.root, &main_src, file) {
+                    Ok(rel) => {
+                        let (text, caption) = crate::insert::figure(&rel, &indent);
+                        pieces.push((text, Some(caption)));
+                    }
+                    Err(e) => self.message(&crate::i18n::trf("Could not copy the image: {}", &[&e])),
+                }
+            } else if crate::project::has_ext(file, "tex") {
+                let rel = file.strip_prefix(&self.root).map(Path::to_path_buf).unwrap_or_else(|_| file.clone());
+                pieces.push((format!("\\input{{{}}}", rel.with_extension("").display()), None));
+            }
+        }
+        if pieces.is_empty() {
+            return false;
+        }
+        buffer.begin_user_action();
+        let base = iter.offset();
+        let mut text = String::new();
+        let mut select: Option<(i32, i32)> = None;
+        for (piece, caption) in &pieces {
+            let piece_start = base + 1 + text.chars().count() as i32 + indent.chars().count() as i32;
+            if select.is_none()
+                && let Some(c) = caption
+                && let Some(b) = piece.find(&format!("\\caption{{{c}}}"))
+            {
+                let at = piece_start + piece[..b].chars().count() as i32 + "\\caption{".len() as i32;
+                select = Some((at, at + c.chars().count() as i32));
+            }
+            text.push('\n');
+            text.push_str(&indent);
+            text.push_str(piece);
+        }
+        buffer.insert(&mut iter, &text);
+        buffer.end_user_action();
+        if let Some((a, b)) = select {
+            buffer.select_range(&buffer.iter_at_offset(a), &buffer.iter_at_offset(b));
+        }
+        view.grab_focus();
+        true
+    }
+
+    /// After a paste: spreadsheet cells (tabs) become a table environment.
+    fn tableize_paste(&self, buffer: &gtk::TextBuffer, start: i32) {
+        let end = buffer.iter_at_mark(&buffer.get_insert());
+        let mut s = buffer.iter_at_offset(start);
+        let pasted = buffer.text(&s, &end, false).to_string();
+        if !pasted.contains('\t') {
+            return;
+        }
+        let Some(rows) = crate::insert::parse_table(&pasted) else { return };
+        let main_src = self.main_src();
+        let booktabs = crate::insert::uses_package(&self.root, &main_src, "booktabs");
+        let mut line_start = s;
+        line_start.set_line_offset(0);
+        let indent: String = buffer.text(&line_start, &s, false).chars().take_while(|c| c.is_whitespace()).collect();
+        let (table, caption) = crate::insert::table(&rows, booktabs, &indent);
+        let mut e = end;
+        buffer.begin_user_action();
+        buffer.delete(&mut s, &mut e);
+        let at = s.offset();
+        buffer.insert(&mut s, &table);
+        buffer.end_user_action();
+        if let Some(b) = table.find(&format!("\\caption{{{caption}}}")) {
+            let a = at + table[..b].chars().count() as i32 + "\\caption{".len() as i32;
+            buffer.select_range(&buffer.iter_at_offset(a), &buffer.iter_at_offset(a + caption.chars().count() as i32));
+        }
+        let msg = if booktabs { tr("Pasted cells turned into a table (Ctrl+Z to undo)").to_string() } else { tr("Pasted cells turned into a table; add \\usepackage{booktabs} for nicer rules (Ctrl+Z to undo)").to_string() };
+        self.message(&msg);
+    }
+
+    /// Inserts a table from a CSV file at the cursor.
+    pub fn insert_csv(&self, csv: &str) -> bool {
+        let Some(view) = self.current_view() else { return false };
+        let Some(rows) = crate::insert::parse_table(csv) else { return false };
+        let booktabs = crate::insert::uses_package(&self.root, &self.main_src(), "booktabs");
+        let buffer = view.buffer();
+        let mut iter = buffer.iter_at_mark(&buffer.get_insert());
+        let (table, _) = crate::insert::table(&rows, booktabs, "");
+        buffer.begin_user_action();
+        buffer.insert(&mut iter, &table);
+        buffer.end_user_action();
+        view.grab_focus();
+        true
     }
 
     pub fn set_math_preview(&self, math: Rc<crate::mathpreview::MathPreview>) {
