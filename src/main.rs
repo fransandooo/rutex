@@ -39,7 +39,38 @@ const APP_ID: &str = "dev.fran.Rutex";
 
 const CSS: &str = include_str!("style.css");
 
+/// On laptops with an NVIDIA card next to an integrated one, keep GTK on the
+/// integrated GPU: initializing the NVIDIA driver wakes the card (battery) and
+/// adds ~45 MB of memory, for an editor that needs none of it. Skipped when the
+/// user chose a renderer or driver themselves.
+fn prefer_integrated_gpu() {
+    let set = |v: &str| std::env::var_os(v).is_some();
+    if ["GSK_RENDERER", "VK_LOADER_DRIVERS_SELECT", "VK_LOADER_DRIVERS_DISABLE", "__EGL_VENDOR_LIBRARY_FILENAMES", "__NV_PRIME_RENDER_OFFLOAD", "DRI_PRIME"].iter().any(|v| set(v)) {
+        return;
+    }
+    let drivers: Vec<String> = std::fs::read_dir("/sys/class/drm")
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().strip_prefix("card").is_some_and(|n| n.chars().all(|c| c.is_ascii_digit())))
+        .filter_map(|e| std::fs::read_link(e.path().join("device/driver")).ok())
+        .filter_map(|d| d.file_name().map(|n| n.to_string_lossy().into_owned()))
+        .collect();
+    let nvidia = drivers.iter().any(|d| d == "nvidia");
+    let other = drivers.iter().any(|d| d != "nvidia" && d != "nouveau");
+    if nvidia && other {
+        // SAFETY: called first thing in main, before any other thread exists.
+        unsafe {
+            std::env::set_var("VK_LOADER_DRIVERS_DISABLE", "*nvidia*");
+            if std::path::Path::new("/usr/share/glvnd/egl_vendor.d/50_mesa.json").is_file() {
+                std::env::set_var("__EGL_VENDOR_LIBRARY_FILENAMES", "/usr/share/glvnd/egl_vendor.d/50_mesa.json");
+            }
+        }
+    }
+}
+
 fn main() -> glib::ExitCode {
+    prefer_integrated_gpu();
     // RUTEX_DEV=1 lanza una instancia aparte (útil para probar sin cerrar la instalada).
     let app_id = if std::env::var_os("RUTEX_DEV").is_some() { format!("{APP_ID}.Devel") } else { APP_ID.to_string() };
     let app = adw::Application::builder()
