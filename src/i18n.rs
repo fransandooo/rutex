@@ -374,6 +374,9 @@ const TABLE: &[(&str, &str)] = &[
     ("Install git to use the version history", "Instala git para usar el historial de versiones"),
     ("Version restored. Your previous state is saved in the history.", "Versión restaurada. Tu estado anterior queda guardado en el historial."),
     ("Version saved", "Versión guardada"),
+    ("Ctrl+click to go there", "Ctrl+clic para ir allí"),
+    ("No \\label{{}} in the project", "No hay ningún \\label{{}} en el proyecto"),
+    ("{} is not in any .bib file", "{} no está en ningún archivo .bib"),
 ];
 
 #[cfg(test)]

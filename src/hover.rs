@@ -10,8 +10,8 @@ use gtk::{gio, glib};
 use sourceview5::subclass::prelude::*;
 use crate::i18n::tr;
 
-/// Dado un buffer y una línea (desde 1), devuelve sus problemas: (es_error, mensaje).
-pub type Lookup = Rc<dyn Fn(&sourceview5::Buffer, u32) -> Vec<(bool, String)>>;
+/// Builds the bubble for a position in a buffer, or None if there is nothing to show.
+pub type Lookup = Rc<dyn Fn(&sourceview5::Buffer, &gtk::TextIter) -> Option<gtk::Widget>>;
 
 mod imp {
     use super::*;
@@ -35,13 +35,13 @@ mod imp {
             context: &sourceview5::HoverContext,
             display: &sourceview5::HoverDisplay,
         ) -> Pin<Box<dyn std::future::Future<Output = Result<(), glib::Error>> + 'static>> {
-            let issues = match (self.lookup.borrow().as_ref(), context.iter()) {
-                (Some(lookup), Some(iter)) => lookup(&context.buffer(), iter.line() as u32 + 1),
-                _ => Vec::new(),
+            let content = match (self.lookup.borrow().as_ref(), context.iter()) {
+                (Some(lookup), Some(iter)) => lookup(&context.buffer(), &iter),
+                _ => None,
             };
-            let found = !issues.is_empty();
-            if found {
-                display.append(&bubble(&issues));
+            let found = content.is_some();
+            if let Some(w) = content {
+                display.append(&w);
             }
             Box::pin(async move {
                 if found { Ok(()) } else { Err(glib::Error::new(gio::IOErrorEnum::NotFound, "no issues")) }
@@ -62,7 +62,8 @@ impl IssueHover {
     }
 }
 
-fn bubble(issues: &[(bool, String)]) -> gtk::Box {
+/// Errors and warnings of a line.
+pub fn issues_bubble(issues: &[(bool, String)]) -> gtk::Box {
     let b = gtk::Box::builder().orientation(gtk::Orientation::Vertical).spacing(6).css_classes(["issue-bubble"]).build();
     for (is_error, msg) in issues {
         let row = gtk::Box::builder().spacing(8).build();
@@ -72,5 +73,46 @@ fn bubble(issues: &[(bool, String)]) -> gtk::Box {
         b.append(&row);
     }
     b.append(&gtk::Label::builder().label(tr("Click the margin icon to see the problems list")).xalign(0.0).css_classes(["dim-label", "caption"]).build());
+    b
+}
+
+/// What a `\\ref` points to: a title or caption, and where it is defined.
+pub fn label_bubble(key: &str, found: Option<(String, String)>) -> gtk::Box {
+    let b = gtk::Box::builder().orientation(gtk::Orientation::Vertical).spacing(4).css_classes(["ref-bubble"]).build();
+    match found {
+        Some((description, location)) => {
+            b.append(&gtk::Label::builder().label(&description).xalign(0.0).wrap(true).max_width_chars(70).css_classes(["heading"]).build());
+            b.append(&gtk::Label::builder().label(format!("{key} · {location}")).xalign(0.0).css_classes(["dim-label", "caption", "monospace"]).build());
+            b.append(&gtk::Label::builder().label(tr("Ctrl+click to go there")).xalign(0.0).css_classes(["dim-label", "caption"]).build());
+        }
+        None => {
+            b.append(&gtk::Label::builder().label(crate::i18n::trf("No \\label{{}} in the project", &[&key])).xalign(0.0).css_classes(["warning"]).build());
+        }
+    }
+    b
+}
+
+/// A bibliography entry: authors, year and title.
+pub fn cite_bubble(key: &str, entry: Option<&crate::index::BibEntry>) -> gtk::Box {
+    let b = gtk::Box::builder().orientation(gtk::Orientation::Vertical).spacing(4).css_classes(["ref-bubble"]).build();
+    match entry {
+        Some(e) => {
+            let who = match (e.author.is_empty(), e.year.is_empty()) {
+                (false, false) => format!("{} ({})", e.author, e.year),
+                (false, true) => e.author.clone(),
+                (true, false) => e.year.clone(),
+                (true, true) => key.to_string(),
+            };
+            b.append(&gtk::Label::builder().label(&who).xalign(0.0).css_classes(["heading"]).build());
+            if !e.title.is_empty() {
+                b.append(&gtk::Label::builder().label(&e.title).xalign(0.0).wrap(true).max_width_chars(70).build());
+            }
+            b.append(&gtk::Label::builder().label(format!("{key} · {}:{}", e.file.display(), e.line)).xalign(0.0).css_classes(["dim-label", "caption", "monospace"]).build());
+            b.append(&gtk::Label::builder().label(tr("Ctrl+click to go there")).xalign(0.0).css_classes(["dim-label", "caption"]).build());
+        }
+        None => {
+            b.append(&gtk::Label::builder().label(crate::i18n::trf("{} is not in any .bib file", &[&key])).xalign(0.0).css_classes(["warning"]).build());
+        }
+    }
     b
 }

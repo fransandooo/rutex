@@ -43,6 +43,7 @@ pub struct Editor {
     stack: gtk::Stack,
     root: PathBuf,
     completion: LatexProvider,
+    data: SharedData,
     key_options: Rc<keys::Options>,
     checker: libspelling::Checker,
     /// Problemas de la última compilación por archivo: (línea, es_error, mensaje).
@@ -97,7 +98,8 @@ impl Editor {
             _tab_strip: tab_strip,
             stack,
             root,
-            completion: LatexProvider::new(data),
+            completion: LatexProvider::new(data.clone()),
+            data,
             issues: RefCell::default(),
             hover: RefCell::default(),
             on_issue_click: RefCell::default(),
@@ -276,6 +278,29 @@ impl Editor {
         if let Some(h) = self.hover.borrow().as_ref() {
             view.hover().add_provider(h);
         }
+        // Ctrl+click on a \\ref or \\cite key: go to its \\label or .bib entry.
+        let goto_def = gtk::GestureClick::new();
+        goto_def.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let weak = Rc::downgrade(self);
+        goto_def.connect_pressed(move |gesture, _, x, y| {
+            if !gesture.current_event_state().contains(gtk::gdk::ModifierType::CONTROL_MASK) {
+                return;
+            }
+            let Some(this) = weak.upgrade() else { return };
+            let Some(view) = gesture.widget().and_downcast::<sourceview5::View>() else { return };
+            let (bx, by) = view.window_to_buffer_coords(gtk::TextWindowType::Widget, x as i32, y as i32);
+            let Some(iter) = view.iter_at_location(bx, by) else { return };
+            let Some(key) = Self::key_at_iter(&view.buffer(), &iter) else { return };
+            if let Some((rel, line)) = this.definition(&key) {
+                gesture.set_state(gtk::EventSequenceState::Claimed);
+                let this2 = this.clone();
+                glib::idle_add_local_once(move || {
+                    let _ = this2.goto(&rel, line);
+                });
+            }
+        });
+        view.add_controller(goto_def);
+
         let weak = Rc::downgrade(self);
         view.connect_line_mark_activated(move |view, iter, _, _, _| {
             let Some(this) = weak.upgrade() else { return };
@@ -424,6 +449,43 @@ impl Editor {
         self.color_marks();
     }
 
+    /// \\ref / \\cite key at an iter.
+    fn key_at_iter(buffer: &impl IsA<gtk::TextBuffer>, iter: &gtk::TextIter) -> Option<crate::completion::KeyAt> {
+        let buffer = buffer.as_ref();
+        let mut start = *iter;
+        start.set_line_offset(0);
+        let mut end = *iter;
+        if !end.ends_line() {
+            end.forward_to_line_end();
+        }
+        let line = buffer.text(&start, &end, false);
+        crate::completion::key_at(&line, iter.line_offset() as usize)
+    }
+
+    /// Where a key is defined: (file, line).
+    fn definition(&self, key: &crate::completion::KeyAt) -> Option<(PathBuf, u32)> {
+        let data = self.data.borrow();
+        match key {
+            crate::completion::KeyAt::Label(k) => data.index.labels.iter().find(|l| l.name == *k).map(|l| (l.file.clone(), l.line)),
+            crate::completion::KeyAt::Cite(k) => data.index.bib.iter().find(|e| e.key == *k).map(|e| (e.file.clone(), e.line)),
+        }
+    }
+
+    fn reference_bubble(&self, buffer: &sourceview5::Buffer, iter: &gtk::TextIter) -> Option<gtk::Widget> {
+        let key = Self::key_at_iter(buffer, iter)?;
+        let data = self.data.borrow();
+        Some(match &key {
+            crate::completion::KeyAt::Cite(k) => crate::hover::cite_bubble(k, data.index.bib.iter().find(|e| e.key == *k)).upcast(),
+            crate::completion::KeyAt::Label(k) => {
+                let found = data.index.labels.iter().find(|l| l.name == *k).map(|l| {
+                    let description = describe_label(&self.root, &data.index, &l.file, l.line).unwrap_or_else(|| k.clone());
+                    (description, format!("{}:{}", l.file.display(), l.line))
+                });
+                crate::hover::label_bubble(k, found).upcast()
+            }
+        })
+    }
+
     /// Clic en el icono de error/aviso del margen.
     pub fn connect_issue_click(&self, f: impl Fn(&Path, u32) + 'static) {
         *self.on_issue_click.borrow_mut() = Some(Box::new(f));
@@ -439,8 +501,22 @@ impl Editor {
 
     fn setup_marks(self: &Rc<Self>) {
         let weak = Rc::downgrade(self);
-        let lookup: crate::hover::Lookup = Rc::new(move |buffer, line| {
-            weak.upgrade().and_then(|this| this.issues_at(buffer, line)).map(|(_, v)| v).unwrap_or_default()
+        let lookup: crate::hover::Lookup = Rc::new(move |buffer, iter| {
+            let this = weak.upgrade()?;
+            let line = iter.line() as u32 + 1;
+            let issues = this.issues_at(buffer, line).map(|(_, v)| v);
+            let reference = this.reference_bubble(buffer, iter);
+            match (issues, reference) {
+                (None, None) => None,
+                (Some(i), None) => Some(crate::hover::issues_bubble(&i).upcast()),
+                (None, Some(r)) => Some(r),
+                (Some(i), Some(r)) => {
+                    let b = gtk::Box::builder().orientation(gtk::Orientation::Vertical).spacing(10).build();
+                    b.append(&r);
+                    b.append(&crate::hover::issues_bubble(&i));
+                    Some(b.upcast())
+                }
+            }
         });
         *self.hover.borrow_mut() = Some(IssueHover::new(lookup));
 
@@ -657,6 +733,23 @@ impl Editor {
             view.scroll_to_iter(&mut s, 0.1, false, 0.0, 0.0);
         }
     }
+}
+
+/// Human description of a label: the section title or the nearby caption.
+fn describe_label(root: &Path, index: &crate::index::Index, file: &Path, line: u32) -> Option<String> {
+    if let Some(s) = index.outline.iter().find(|s| s.file == file && s.line.abs_diff(line) <= 1) {
+        return Some(s.title.clone());
+    }
+    let src = fs::read_to_string(root.join(file)).ok()?;
+    let lines: Vec<&str> = src.lines().collect();
+    let from = (line as usize).saturating_sub(10);
+    let to = (line as usize + 3).min(lines.len());
+    lines[from..to].iter().rev().find_map(|l| {
+        crate::index::calls(crate::project::strip_comment(l))
+            .into_iter()
+            .find(|c| c.name == "caption")
+            .and_then(|c| c.arg.map(crate::index::clean_title))
+    })
 }
 
 const MARK_ERROR: &str = "rutex-error";

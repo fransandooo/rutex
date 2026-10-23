@@ -37,6 +37,11 @@ pub struct Label {
 pub struct BibEntry {
     pub key: String,
     pub title: String,
+    pub author: String,
+    pub year: String,
+    /// .bib file (relative to the root) and line of the entry.
+    pub file: PathBuf,
+    pub line: u32,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -162,8 +167,9 @@ pub fn build(root: &Path, main: &Path, all_files: &[PathBuf]) -> Index {
     let mut seen = HashSet::new();
     for f in all_files.iter().filter(|f| project::has_ext(f, "bib")) {
         if let Ok(src) = fs::read_to_string(root.join(f)) {
-            for e in parse_bib(&src) {
+            for mut e in parse_bib(&src) {
                 if seen.insert(e.key.clone()) {
+                    e.file = f.clone();
                     index.bib.push(e);
                 }
             }
@@ -227,6 +233,7 @@ pub fn parse_bib(src: &str) -> Vec<BibEntry> {
     let mut out = Vec::new();
     let mut rest = src;
     while let Some(at) = rest.find('@') {
+        let line = src[..src.len() - rest.len() + at].matches('\n').count() as u32 + 1;
         rest = &rest[at + 1..];
         let kind: String = rest.chars().take_while(|c| c.is_ascii_alphabetic()).collect();
         let lower = kind.to_ascii_lowercase();
@@ -241,10 +248,31 @@ pub fn parse_bib(src: &str) -> Vec<BibEntry> {
             continue;
         }
         let entry_end = body.find("\n@").unwrap_or(body.len());
-        let title = field(&body[..entry_end], "title").map(|t| clean_title(&t)).unwrap_or_default();
-        out.push(BibEntry { key, title });
+        let entry = &body[..entry_end];
+        let title = field(entry, "title").map(|t| clean_title(&t)).unwrap_or_default();
+        let author = field(entry, "author").map(|a| short_authors(&clean_title(&a))).unwrap_or_default();
+        let year = field(entry, "year").or_else(|| field(entry, "date").map(|d| d.chars().take(4).collect())).unwrap_or_default();
+        out.push(BibEntry { key, title, author, year: year.trim().to_string(), file: PathBuf::new(), line });
     }
     out
+}
+
+/// "Knuth, Donald and Lamport, Leslie" → "Knuth and Lamport"; 3+ → "Knuth et al."
+fn short_authors(raw: &str) -> String {
+    let surname = |a: &str| -> String {
+        let a = a.trim();
+        match a.split_once(',') {
+            Some((last, _)) => last.trim().to_string(),
+            None => a.split_whitespace().last().unwrap_or(a).to_string(),
+        }
+    };
+    let authors: Vec<&str> = raw.split(" and ").collect();
+    match authors.len() {
+        0 => String::new(),
+        1 => surname(authors[0]),
+        2 => format!("{} & {}", surname(authors[0]), surname(authors[1])),
+        _ => format!("{} et al.", surname(authors[0])),
+    }
 }
 
 fn field(entry: &str, name: &str) -> Option<String> {
@@ -293,7 +321,13 @@ mod tests {
         let bib = "@article{knuth84,\n  author = {Donald Knuth},\n  title = {Literate {P}rogramming},\n}\n@comment{x}\n@book{lamport,\n title=\"LaTeX\"}";
         let e = parse_bib(bib);
         assert_eq!(e.len(), 2);
-        assert_eq!(e[0], BibEntry { key: "knuth84".into(), title: "Literate Programming".into() });
+        assert_eq!(e[0].key, "knuth84");
+        assert_eq!(e[0].title, "Literate Programming");
+        assert_eq!(e[0].author, "Knuth");
+        assert_eq!(e[0].line, 1);
+        assert_eq!(e[1].line, 6);
+        assert_eq!(short_authors("Vaswani, Ashish and Shazeer, Noam and Parmar, Niki"), "Vaswani et al.");
+        assert_eq!(short_authors("Leslie Lamport and Donald Knuth"), "Lamport & Knuth");
         assert_eq!(e[1].title, "LaTeX");
     }
 

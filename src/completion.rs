@@ -508,6 +508,31 @@ fn proposals(ctx: &Context, data: Option<&SharedData>, context: &sourceview5::Co
     out
 }
 
+/// Key under the cursor inside `\ref{…}`/`\cite{…}` (column in characters).
+#[derive(Debug, PartialEq, Eq)]
+pub enum KeyAt {
+    Label(String),
+    Cite(String),
+}
+
+pub fn key_at(line: &str, col: usize) -> Option<KeyAt> {
+    let byte = line.char_indices().nth(col).map_or(line.len(), |(i, _)| i);
+    let (before, after) = line.split_at(byte);
+    let Context::Argument { command, prefix } = analyze(before)? else { return None };
+    let tail: String = after.chars().take_while(|c| *c != ',' && *c != '}').collect();
+    let key = format!("{prefix}{tail}").trim().to_string();
+    if key.is_empty() {
+        return None;
+    }
+    if REF_COMMANDS.contains(&command.as_str()) || command == "label" {
+        Some(KeyAt::Label(key))
+    } else if CITE_COMMANDS.contains(&command.as_str()) {
+        Some(KeyAt::Cite(key))
+    } else {
+        None
+    }
+}
+
 /// Último `\begin{x}` sin su `\end{x}` antes del cursor.
 fn open_environment(buffer: &sourceview5::Buffer) -> Option<String> {
     let end = buffer.iter_at_mark(&buffer.get_insert());
@@ -532,6 +557,17 @@ fn open_environment(buffer: &sourceview5::Buffer) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn finds_key_under_cursor() {
+        let line = "see \\cref{fig:a} and \\cite[p.~2]{knuth84, lamport}.";
+        let col = |s: &str| line.find(s).unwrap() + 1;
+        assert_eq!(key_at(line, col("fig:a")), Some(KeyAt::Label("fig:a".into())));
+        assert_eq!(key_at(line, col("lamport") + 2), Some(KeyAt::Cite("lamport".into())));
+        assert_eq!(key_at(line, col("knuth84")), Some(KeyAt::Cite("knuth84".into())));
+        assert_eq!(key_at(line, 2), None);
+        assert_eq!(key_at("\\textbf{word}", 9), None);
+    }
 
     #[test]
     fn analyzes_contexts() {
