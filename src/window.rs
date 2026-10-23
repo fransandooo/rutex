@@ -13,6 +13,7 @@ use crate::compiler::{self, Outcome};
 use crate::config::{self, ThemeMode};
 use crate::editor::Editor;
 use crate::filetree::FileTree;
+use crate::index::{self, Index, Section};
 use crate::logparse::Severity;
 use crate::pdf::PdfView;
 use crate::project::Project;
@@ -38,6 +39,8 @@ pub fn set_accels(app: &adw::Application) {
         ("win.zoom-fit", &["<Ctrl>0"]),
         ("win.toggle-sidebar", &["F9"]),
         ("win.toggle-issues", &["<Ctrl>e"]),
+        ("win.show-files", &["<Ctrl><Shift>e"]),
+        ("win.show-outline", &["<Ctrl><Shift>o"]),
         ("win.close-tab", &["<Ctrl>w"]),
         ("window.close", &["<Ctrl><Shift>w"]),
         ("app.quit", &["<Ctrl>q"]),
@@ -264,6 +267,11 @@ pub struct ProjectWindow {
     compile: RefCell<CompileState>,
     autosave: RefCell<Option<glib::SourceId>>,
     pdf_mtime: Cell<Option<SystemTime>>,
+    index: Rc<RefCell<Index>>,
+    index_generation: Cell<u64>,
+    outline_list: gtk::ListBox,
+    sections: adw::ToggleGroup,
+    split: adw::OverlaySplitView,
 }
 
 impl ProjectWindow {
@@ -325,7 +333,10 @@ impl ProjectWindow {
 
         // --- Barra lateral ---
         let tree = FileTree::new(project.root.clone(), project.main.clone());
-        let sidebar_title = gtk::Label::builder().label("ARCHIVOS").xalign(0.0).hexpand(true).css_classes(["sidebar-title"]).build();
+        let sections = adw::ToggleGroup::builder().css_classes(["round", "sidebar-switcher"]).homogeneous(true).hexpand(true).build();
+        sections.add(adw::Toggle::builder().name("files").label("Archivos").build());
+        sections.add(adw::Toggle::builder().name("outline").label("Esquema").build());
+        sections.set_active_name(Some("files"));
         let new_file_btn = gtk::Button::builder().icon_name("document-new-symbolic").tooltip_text("Nuevo archivo (Ctrl+N)").action_name("win.new-file").css_classes(["flat"]).build();
         let new_folder_btn = gtk::Button::builder()
             .icon_name("folder-new-symbolic")
@@ -335,12 +346,31 @@ impl ProjectWindow {
             .css_classes(["flat"])
             .build();
         let sidebar_header = gtk::Box::builder().spacing(2).css_classes(["sidebar-header"]).build();
-        sidebar_header.append(&sidebar_title);
-        sidebar_header.append(&new_file_btn);
-        sidebar_header.append(&new_folder_btn);
+        sidebar_header.append(&sections);
+
+        let files_title = gtk::Label::builder().label(project.name().to_uppercase()).xalign(0.0).hexpand(true).ellipsize(gtk::pango::EllipsizeMode::End).css_classes(["sidebar-title"]).build();
+        let files_header = gtk::Box::builder().spacing(2).css_classes(["pane-header"]).build();
+        files_header.append(&files_title);
+        files_header.append(&new_file_btn);
+        files_header.append(&new_folder_btn);
+        let files_pane = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        files_pane.append(&files_header);
+        files_pane.append(&tree.widget);
+
+        let outline_list = gtk::ListBox::builder().css_classes(["navigation-sidebar", "outline"]).build();
+        outline_list.set_placeholder(Some(
+            &gtk::Label::builder().label("Sin secciones todavía.\nUsa \\section{…}").justify(gtk::Justification::Center).css_classes(["dim-label"]).margin_top(24).build(),
+        ));
+        let outline_scroller = gtk::ScrolledWindow::builder().child(&outline_list).hscrollbar_policy(gtk::PolicyType::Never).vexpand(true).build();
+
+        let sidebar_stack = gtk::Stack::builder().transition_type(gtk::StackTransitionType::Crossfade).vexpand(true).build();
+        sidebar_stack.add_named(&files_pane, Some("files"));
+        sidebar_stack.add_named(&outline_scroller, Some("outline"));
+        sections.bind_property("active-name", &sidebar_stack, "visible-child-name").sync_create().build();
+
         let sidebar = gtk::Box::builder().orientation(gtk::Orientation::Vertical).css_classes(["rutex-sidebar"]).build();
         sidebar.append(&sidebar_header);
-        sidebar.append(&tree.widget);
+        sidebar.append(&sidebar_stack);
 
         // --- Panel de problemas ---
         let issues_list = gtk::ListBox::builder().css_classes(["issues"]).build();
@@ -427,6 +457,11 @@ impl ProjectWindow {
             compile: RefCell::default(),
             autosave: RefCell::default(),
             pdf_mtime: Cell::new(None),
+            index: Rc::default(),
+            index_generation: Cell::new(0),
+            outline_list,
+            sections,
+            split,
         });
 
         this.issues_btn.bind_property("active", &this.issues_revealer, "reveal-child").sync_create().build();
@@ -442,6 +477,7 @@ impl ProjectWindow {
             this.pdf.load(pdf_path);
         }
         this.compile();
+        this.refresh_index();
         this
     }
 
@@ -465,6 +501,15 @@ impl ProjectWindow {
                 if let Some(rel) = this.editor.current() {
                     this.tree.select(&rel);
                 }
+            }
+        });
+
+        let weak = Rc::downgrade(self);
+        self.outline_list.connect_row_activated(move |_, row| {
+            let Some(this) = weak.upgrade() else { return };
+            let target = this.index.borrow().outline.get(row.index() as usize).map(|s| (s.file.clone(), s.line));
+            if let Some((file, line)) = target {
+                this.goto(&file, line);
             }
         });
 
@@ -564,6 +609,8 @@ impl ProjectWindow {
         add("export-pdf", Box::new(|t| t.export_pdf()));
         add("open-pdf", Box::new(|t| t.open_pdf_external()));
         add("clean", Box::new(|t| t.clean()));
+        add("show-files", Box::new(|t| t.show_sidebar("files")));
+        add("show-outline", Box::new(|t| t.show_sidebar("outline")));
         add("close-tab", Box::new(|t| t.editor.close_current()));
         add("toggle-issues", Box::new(|t| t.issues_btn.set_active(!t.issues_revealer.reveals_child())));
         let btn = sidebar_btn.clone();
@@ -619,9 +666,56 @@ impl ProjectWindow {
         }
     }
 
-    fn refresh_files(&self) {
+    fn refresh_files(self: &Rc<Self>) {
+        let before = self.project.borrow().files.clone();
         self.project.borrow_mut().rescan();
         self.tree.refresh();
+        if self.project.borrow().files != before {
+            self.refresh_index();
+        }
+    }
+
+    /// Recalcula esquema, etiquetas y bibliografía en un hilo aparte.
+    fn refresh_index(self: &Rc<Self>) {
+        let generation = self.index_generation.get() + 1;
+        self.index_generation.set(generation);
+        let p = self.project.borrow().clone();
+        let weak = Rc::downgrade(self);
+        glib::spawn_future_local(async move {
+            let built = gio::spawn_blocking(move || index::build(&p.root, &p.main, &p.files)).await;
+            let Some(this) = weak.upgrade() else { return };
+            if this.index_generation.get() != generation {
+                return;
+            }
+            if let Ok(idx) = built {
+                this.fill_outline(&idx.outline);
+                *this.index.borrow_mut() = idx;
+            }
+        });
+    }
+
+    fn show_sidebar(&self, name: &str) {
+        self.split.set_show_sidebar(true);
+        self.sections.set_active_name(Some(name));
+    }
+
+    fn fill_outline(&self, outline: &[Section]) {
+        while let Some(child) = self.outline_list.first_child() {
+            self.outline_list.remove(&child);
+        }
+        let min = outline.iter().map(|s| s.level).min().unwrap_or(0);
+        for section in outline {
+            let depth = (section.level - min) as i32;
+            let label = gtk::Label::builder()
+                .label(&section.title)
+                .xalign(0.0)
+                .ellipsize(gtk::pango::EllipsizeMode::End)
+                .margin_start(depth * 14)
+                .tooltip_text(format!("{}:{}", section.file.display(), section.line))
+                .css_classes([format!("outline-depth-{}", depth.min(3))])
+                .build();
+            self.outline_list.append(&label);
+        }
     }
 
     /// Abre un archivo del árbol: los de texto en el editor y el resto (imágenes,
@@ -690,6 +784,7 @@ impl ProjectWindow {
         }
         self.save();
         self.compile();
+        self.refresh_index();
     }
 
     /// Si ya hay una compilación en marcha no se interrumpe (matar pdflatex a

@@ -6,7 +6,7 @@
   border-right: 1px solid var(--border-color);
 }
 .sidebar-header {
-  padding: 8px 8px 4px 14px;
+  padding: 8px 10px 4px 10px;
   min-height: 30px;
 }
 .sidebar-title {
@@ -134,4 +134,29 @@ tabbar.rutex-tabs tab:selected {
 }
 .file-tree .main-star {
   color: var(--accent-color);
+}
+
+/* ---------- Selector Archivos / Esquema ---------- */
+.sidebar-switcher {
+  font-size: 0.9em;
+}
+.outline > row {
+  min-height: 26px;
+  border-radius: 7px;
+  margin: 1px 6px;
+  padding: 0 10px;
+}
+.outline .outline-depth-0 {
+  font-weight: 700;
+}
+.outline .outline-depth-1 {
+  font-weight: 500;
+}
+.outline .outline-depth-2,
+.outline .outline-depth-3 {
+  opacity: 0.8;
+}
+.pane-header {
+  padding: 2px 6px 2px 14px;
+  min-height: 30px;
 }

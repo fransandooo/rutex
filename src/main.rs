@@ -2,6 +2,7 @@ mod compiler;
 mod config;
 mod editor;
 mod filetree;
+mod index;
 mod logparse;
 mod pdf;
 mod project;
