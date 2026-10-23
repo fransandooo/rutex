@@ -32,8 +32,8 @@ The interface is in English by default, and Spanish is available in Preferences.
   Hover over one to read the message, or click its margin icon to open the problems list.
 - **Spell checking** as you type, in the document's language (from `babel`/`polyglossia`), that
   skips commands, math, labels, citation keys and file names.
-- **Hover a `\\ref` or `\\cite`** to see what it points to (the caption, section title or entry),
-  and **Ctrl+click** it to go to the `\\label` or the `.bib` entry.
+- **Hover a `\ref` or `\cite`** to see what it points to (the caption, section title or entry),
+  and **Ctrl+click** it to go to the `\label` or the `.bib` entry.
 - **Find and replace in the whole project** (`Ctrl+Shift+F`).
 - **Words per chapter** and an optional word goal, from the status bar.
 - **Optional Vim mode**.
@@ -165,7 +165,7 @@ Press `Ctrl+?` inside the app to see them all.
 | `Ctrl+F` / `Ctrl+Shift+F` / `Ctrl+G` | Find / find in project / go to line |
 | `Ctrl+Shift+H` / `Ctrl+Shift+S` | Version history / save a named version |
 | `Ctrl+Shift+R` | Check before submitting |
-| `Ctrl+click` on a `\\ref` or `\\cite` key | Go to its `\\label` or `.bib` entry |
+| `Ctrl+click` on a `\ref` or `\cite` key | Go to its `\label` or `.bib` entry |
 | `Ctrl+/` | Comment or uncomment lines |
 | `Ctrl+B` / `Ctrl+I` | `\textbf{}` / `\textit{}` |
 | `Ctrl+D` / `Ctrl+Shift+K` / `Alt+↑↓` | Duplicate / delete / move lines |
