@@ -9,7 +9,7 @@ without leaving anything running in the background.
 It is built with GTK4 + libadwaita and made with [Omarchy](https://omarchy.org)
 (Arch + Hyprland) in mind, but it runs on any modern Linux desktop.
 
-> **Note:** the interface is currently in Spanish. An English translation is planned.
+The interface is in English by default, and Spanish is available in Preferences.
 
 ## Features
 
@@ -28,8 +28,8 @@ It is built with GTK4 + libadwaita and made with [Omarchy](https://omarchy.org)
 - **Outline**: the chapters and sections of the whole document (following `\input`), one
   click away.
 - **Quick open** (`Ctrl+P`) with fuzzy search over files, or sections with `@`.
-- **Errors where they happen**: lines with errors and warnings are marked in the editor, and
-  the problems panel opens the file at the right line.
+- **Errors where they happen**: lines with errors and warnings are marked in the editor.
+  Hover over one to read the message, or click its margin icon to open the problems list.
 - **Word count** of the whole document in the status bar.
 - **Optional Vim mode**.
 
@@ -37,17 +37,23 @@ It is built with GTK4 + libadwaita and made with [Omarchy](https://omarchy.org)
 - **Follows your Omarchy theme live**: change it with `omarchy-theme-set` and the interface
   and the editor's syntax colors update immediately. On other desktops it follows the
   system's light/dark setting.
-- Optional **dark mode for the PDF**, which repaints pages with your theme colors.
+- **Dark mode for the PDF** (the moon button in the viewer), which repaints pages with your
+  theme colors.
+- Its own flat look: custom tabs, and a command center in the header that opens quick open.
 
 **PDF**
 - **Built-in viewer** that renders only the visible pages, on a separate thread. It doesn't
   flicker and keeps your scroll position when it reloads.
 - **SyncTeX**: double-click the PDF to jump to the source line, and press `Ctrl+J` to jump from
   the source to the PDF.
+- **Fullscreen reading**: `F11` or the button in the viewer shows only the PDF; `Esc` goes back.
 
 **Projects**
-- **Templates**: article, TFM/thesis (chapters, biblatex + biber), lecture notes, Beamer
-  slides and empty.
+- **A showcase demo**: "Try the demo" on the welcome screen opens a 16-page project with TikZ,
+  PGFPlots, circuits, trees, tables, algorithms, code listings, a Gantt chart and a
+  bibliography. Its source is in [`demo/`](demo/).
+- **Templates**: article, thesis (chapters, biblatex + biber), lecture notes, Beamer slides
+  and empty. They follow the interface language, including `babel` and folder names.
 - **Automatic engine choice**: pdfLaTeX by default, XeLaTeX for `fontspec` / `unicode-math` /
   `polyglossia`. The `% !TEX program` and `% !TEX root` magic comments and your `latexmkrc`
   are respected.
@@ -70,7 +76,7 @@ It is built with GTK4 + libadwaita and made with [Omarchy](https://omarchy.org)
 sudo pacman -S --needed gtk4 libadwaita gtksourceview5 poppler-glib \
   texlive-basic texlive-latex texlive-latexrecommended texlive-latexextra \
   texlive-fontsrecommended texlive-bibtexextra texlive-mathscience texlive-binextra \
-  texlive-xetex texlive-luatex biber
+  texlive-xetex texlive-luatex texlive-pictures biber
 # Optional, for Spanish documents: texlive-langspanish
 ```
 
@@ -144,6 +150,7 @@ Press `Ctrl+?` inside the app to see them all.
 | `Ctrl+Shift+E` / `Ctrl+Shift+O` / `F9` | Files / outline / toggle sidebar |
 | `Ctrl+E` | Problems panel |
 | `Ctrl++` / `Ctrl+-` / `Ctrl+0` / `Ctrl+wheel` | PDF zoom |
+| `F11` / `Esc` | PDF fullscreen / back |
 | `Ctrl+,` | Preferences |
 | `Ctrl+W` / `Ctrl+Shift+W` / `Ctrl+Q` | Close tab / close window / quit |
 
@@ -166,6 +173,7 @@ More details (in Spanish) are in [docs/DISENO.md](docs/DISENO.md).
 cargo run -- path/to/project
 cargo test                 # unit tests
 cargo test -- --ignored    # also compiles every template (needs TeX Live)
+RUTEX_DEV=1 cargo run      # separate instance that runs alongside the installed one
 ```
 
 ## License
