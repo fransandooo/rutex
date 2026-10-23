@@ -105,6 +105,25 @@ impl Project {
     }
 }
 
+const TEXT_EXTRA: &[&str] = &[
+    "csv", "tsv", "dat", "json", "yaml", "yml", "toml", "ini", "xml", "py", "r", "m", "jl", "lua", "sh", "tikz",
+    "pgf", "asy", "gp", "gnuplot", "html", "css", "js", "log", "bbl", "ist", "glo",
+];
+
+/// ¿Se puede abrir en el editor? Por extensión; sin extensión, si es UTF-8 y pequeño.
+pub fn is_text(abs: &Path) -> bool {
+    match abs.extension() {
+        Some(_) => EDITABLE.iter().chain(TEXT_EXTRA).any(|e| has_ext(abs, e)),
+        None => {
+            let Ok(meta) = fs::metadata(abs) else { return false };
+            if meta.len() > 1_000_000 {
+                return false;
+            }
+            fs::read(abs).is_ok_and(|b| std::str::from_utf8(&b).is_ok() && !b.contains(&0))
+        }
+    }
+}
+
 pub fn has_ext(p: &Path, ext: &str) -> bool {
     p.extension().is_some_and(|e| e.eq_ignore_ascii_case(ext))
 }

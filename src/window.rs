@@ -12,6 +12,7 @@ use gtk::{gio, glib};
 use crate::compiler::{self, Outcome};
 use crate::config::{self, ThemeMode};
 use crate::editor::Editor;
+use crate::filetree::FileTree;
 use crate::logparse::Severity;
 use crate::pdf::PdfView;
 use crate::project::Project;
@@ -249,7 +250,7 @@ pub struct ProjectWindow {
     editor: Rc<Editor>,
     pdf: Rc<PdfView>,
     toasts: adw::ToastOverlay,
-    files_list: gtk::ListBox,
+    tree: Rc<FileTree>,
     spinner: adw::Spinner,
     status_icon: gtk::Image,
     status: gtk::Label,
@@ -323,16 +324,23 @@ impl ProjectWindow {
         header.pack_end(&issues_btn);
 
         // --- Barra lateral ---
-        let files_list = gtk::ListBox::builder().css_classes(["navigation-sidebar"]).build();
-        let files_scroller = gtk::ScrolledWindow::builder().child(&files_list).hscrollbar_policy(gtk::PolicyType::Never).vexpand(true).build();
+        let tree = FileTree::new(project.root.clone(), project.main.clone());
         let sidebar_title = gtk::Label::builder().label("ARCHIVOS").xalign(0.0).hexpand(true).css_classes(["sidebar-title"]).build();
         let new_file_btn = gtk::Button::builder().icon_name("document-new-symbolic").tooltip_text("Nuevo archivo (Ctrl+N)").action_name("win.new-file").css_classes(["flat"]).build();
+        let new_folder_btn = gtk::Button::builder()
+            .icon_name("folder-new-symbolic")
+            .tooltip_text("Nueva carpeta")
+            .action_name("win.tree-new-folder")
+            .action_target(&"".to_variant())
+            .css_classes(["flat"])
+            .build();
         let sidebar_header = gtk::Box::builder().spacing(2).css_classes(["sidebar-header"]).build();
         sidebar_header.append(&sidebar_title);
         sidebar_header.append(&new_file_btn);
+        sidebar_header.append(&new_folder_btn);
         let sidebar = gtk::Box::builder().orientation(gtk::Orientation::Vertical).css_classes(["rutex-sidebar"]).build();
         sidebar.append(&sidebar_header);
-        sidebar.append(&files_scroller);
+        sidebar.append(&tree.widget);
 
         // --- Panel de problemas ---
         let issues_list = gtk::ListBox::builder().css_classes(["issues"]).build();
@@ -377,8 +385,8 @@ impl ProjectWindow {
         let split = adw::OverlaySplitView::builder()
             .sidebar(&sidebar)
             .content(&main)
-            .min_sidebar_width(200.0)
-            .max_sidebar_width(300.0)
+            .min_sidebar_width(230.0)
+            .max_sidebar_width(320.0)
             .sidebar_width_fraction(0.16)
             .build();
         sidebar_btn.bind_property("active", &split, "show-sidebar").bidirectional().sync_create().build();
@@ -405,7 +413,7 @@ impl ProjectWindow {
             editor,
             pdf,
             toasts,
-            files_list,
+            tree,
             spinner,
             status_icon,
             status,
@@ -425,7 +433,6 @@ impl ProjectWindow {
         this.editor.set_vim(config::get().vim);
         this.connect_signals();
         this.add_actions(&sidebar_btn);
-        this.refresh_files();
         this.open_file(first);
 
         // PDF de la sesión anterior: vista previa instantánea mientras se recompila.
@@ -455,16 +462,16 @@ impl ProjectWindow {
         let weak = Rc::downgrade(self);
         self.editor.connect_switch(move || {
             if let Some(this) = weak.upgrade() {
-                this.select_current_file();
+                if let Some(rel) = this.editor.current() {
+                    this.tree.select(&rel);
+                }
             }
         });
 
         let weak = Rc::downgrade(self);
-        self.files_list.connect_row_activated(move |_, row| {
-            let Some(this) = weak.upgrade() else { return };
-            let rel = this.project.borrow().files.get(row.index() as usize).cloned();
-            if let Some(rel) = rel {
-                this.open_file(&rel);
+        self.tree.connect_open(move |rel| {
+            if let Some(this) = weak.upgrade() {
+                this.open_path(rel);
             }
         });
 
@@ -502,7 +509,6 @@ impl ProjectWindow {
                 return;
             }
             let Some(this) = weak.upgrade() else { return };
-            this.project.borrow_mut().rescan();
             this.refresh_files();
             if this.editor.reload_external() {
                 this.compile();
@@ -546,8 +552,15 @@ impl ProjectWindow {
         add("zoom-in", Box::new(|t| t.pdf.zoom(1)));
         add("zoom-out", Box::new(|t| t.pdf.zoom(-1)));
         add("zoom-fit", Box::new(|t| t.pdf.zoom(0)));
-        add("new-file", Box::new(|t| t.new_file_dialog()));
-        add("set-main", Box::new(|t| t.set_main()));
+        add("new-file", Box::new(|t| {
+            let dir = t.editor.current().and_then(|c| c.parent().map(Path::to_path_buf)).unwrap_or_default();
+            t.new_file_dialog(&dir);
+        }));
+        add("set-main", Box::new(|t| {
+            if let Some(rel) = t.editor.current() {
+                t.set_main(&rel);
+            }
+        }));
         add("export-pdf", Box::new(|t| t.export_pdf()));
         add("open-pdf", Box::new(|t| t.open_pdf_external()));
         add("clean", Box::new(|t| t.clean()));
@@ -555,6 +568,39 @@ impl ProjectWindow {
         add("toggle-issues", Box::new(|t| t.issues_btn.set_active(!t.issues_revealer.reveals_child())));
         let btn = sidebar_btn.clone();
         add("toggle-sidebar", Box::new(move |_| btn.set_active(!btn.is_active())));
+
+        // Acciones del árbol de archivos: reciben la ruta relativa como parámetro.
+        type PathHandler = Box<dyn Fn(&Rc<ProjectWindow>, PathBuf)>;
+        let add_path = |name: &str, f: PathHandler| {
+            let action = gio::SimpleAction::new(name, Some(glib::VariantTy::STRING));
+            let weak = Rc::downgrade(self);
+            action.connect_activate(move |_, param| {
+                if let (Some(this), Some(rel)) = (weak.upgrade(), param.and_then(|p| p.get::<String>())) {
+                    f(&this, PathBuf::from(rel));
+                }
+            });
+            self.window.add_action(&action);
+        };
+        add_path("tree-new-file", Box::new(|t, dir| t.new_file_dialog(&dir)));
+        add_path("tree-new-folder", Box::new(|t, dir| t.new_folder_dialog(&dir)));
+        add_path("tree-rename", Box::new(|t, rel| t.rename_dialog(&rel)));
+        add_path("tree-trash", Box::new(|t, rel| t.trash_dialog(&rel)));
+        add_path("tree-set-main", Box::new(|t, rel| t.set_main(&rel)));
+        add_path("tree-copy-path", Box::new(|t, rel| {
+            let abs = t.project.borrow().root.join(&rel);
+            t.window.clipboard().set_text(&abs.to_string_lossy());
+            t.toast("Ruta copiada");
+        }));
+        add_path("tree-reveal", Box::new(|t, rel| {
+            let abs = t.project.borrow().root.join(&rel);
+            let file = gio::File::for_path(&abs);
+            let launcher = gtk::FileLauncher::new(Some(&file));
+            if abs.is_dir() {
+                launcher.launch(Some(&t.window), gio::Cancellable::NONE, |_| {});
+            } else {
+                launcher.open_containing_folder(Some(&t.window), gio::Cancellable::NONE, |_| {});
+            }
+        }));
     }
 
     fn toast(&self, msg: &str) {
@@ -574,38 +620,48 @@ impl ProjectWindow {
     }
 
     fn refresh_files(&self) {
-        while let Some(child) = self.files_list.first_child() {
-            self.files_list.remove(&child);
-        }
-        let project = self.project.borrow();
-        for rel in &project.files {
-            let name = rel.file_name().unwrap_or_default().to_string_lossy();
-            let dir = rel.parent().map(|p| p.display().to_string()).unwrap_or_default();
-            let markup = if dir.is_empty() {
-                glib::markup_escape_text(&name).to_string()
-            } else {
-                format!("<span alpha=\"55%\">{}/</span>{}", glib::markup_escape_text(&dir), glib::markup_escape_text(&name))
-            };
-            let label = gtk::Label::builder().label(markup).use_markup(true).xalign(0.0).ellipsize(gtk::pango::EllipsizeMode::Start).hexpand(true).build();
-            let row_box = gtk::Box::builder().spacing(8).build();
-            row_box.append(&gtk::Image::from_icon_name(crate::editor::file_icon(rel)));
-            row_box.append(&label);
-            if *rel == project.main {
-                row_box.append(&gtk::Image::builder().icon_name("starred-symbolic").tooltip_text("Archivo principal").build());
-            }
-            self.files_list.append(&row_box);
-        }
-        drop(project);
-        self.select_current_file();
+        self.project.borrow_mut().rescan();
+        self.tree.refresh();
     }
 
-    fn select_current_file(&self) {
-        let current = self.editor.current();
-        let idx = current.and_then(|c| self.project.borrow().files.iter().position(|f| *f == c));
-        match idx.and_then(|i| self.files_list.row_at_index(i as i32)) {
-            Some(row) => self.files_list.select_row(Some(&row)),
-            None => self.files_list.unselect_all(),
+    /// Abre un archivo del árbol: los de texto en el editor y el resto (imágenes,
+    /// PDF…) con la aplicación del sistema.
+    fn open_path(self: &Rc<Self>, rel: &Path) {
+        let abs = self.project.borrow().root.join(rel);
+        if crate::project::is_text(&abs) {
+            self.open_file(rel);
+        } else {
+            gtk::FileLauncher::new(Some(&gio::File::for_path(abs))).launch(Some(&self.window), gio::Cancellable::NONE, |_| {});
         }
+    }
+
+    /// Diálogo con un campo de texto. `on_ok` recibe el texto ya validado como
+    /// ruta relativa segura (sin `..` ni `/` inicial).
+    fn ask_path(self: &Rc<Self>, heading: &str, body: &str, initial: &str, ok_label: &str, on_ok: impl Fn(&Rc<Self>, PathBuf) + 'static) {
+        let entry = gtk::Entry::builder().text(initial).activates_default(true).build();
+        let dialog = adw::AlertDialog::builder()
+            .heading(heading)
+            .body(body)
+            .extra_child(&entry)
+            .default_response("ok")
+            .close_response("cancel")
+            .build();
+        dialog.add_responses(&[("cancel", "Cancelar"), ("ok", ok_label)]);
+        dialog.set_response_appearance("ok", adw::ResponseAppearance::Suggested);
+        let weak = Rc::downgrade(self);
+        let input = entry.clone();
+        dialog.connect_response(Some("ok"), move |_, _| {
+            let Some(this) = weak.upgrade() else { return };
+            let text = input.text().trim().trim_matches('/').to_string();
+            if text.is_empty() || text.split('/').any(|c| c == ".." || c.is_empty()) {
+                this.toast("Nombre no válido");
+                return;
+            }
+            on_ok(&this, PathBuf::from(text));
+        });
+        dialog.present(Some(&self.window));
+        entry.grab_focus();
+        entry.set_position(-1);
     }
 
     fn schedule_autosave(self: &Rc<Self>) {
@@ -799,26 +855,9 @@ impl ProjectWindow {
         });
     }
 
-    fn new_file_dialog(self: &Rc<Self>) {
-        let entry = gtk::Entry::builder().placeholder_text("capitulos/introduccion.tex").activates_default(true).build();
-        let dialog = adw::AlertDialog::builder()
-            .heading("Nuevo archivo")
-            .body("Ruta relativa a la carpeta del proyecto")
-            .extra_child(&entry)
-            .default_response("create")
-            .close_response("cancel")
-            .build();
-        dialog.add_responses(&[("cancel", "Cancelar"), ("create", "Crear")]);
-        dialog.set_response_appearance("create", adw::ResponseAppearance::Suggested);
-        let weak = Rc::downgrade(self);
-        let input = entry.clone();
-        dialog.connect_response(Some("create"), move |_, _| {
-            let Some(this) = weak.upgrade() else { return };
-            let text = input.text().trim().trim_start_matches('/').to_string();
-            if text.is_empty() || text.split('/').any(|c| c == "..") {
-                return;
-            }
-            let mut rel = PathBuf::from(&text);
+    fn new_file_dialog(self: &Rc<Self>, dir: &Path) {
+        let initial = if dir.as_os_str().is_empty() { String::new() } else { format!("{}/", dir.display()) };
+        self.ask_path("Nuevo archivo", "Ruta dentro del proyecto. Si no pones extensión, será .tex.", &initial, "Crear", |this, mut rel| {
             if rel.extension().is_none() {
                 rel.set_extension("tex");
             }
@@ -830,20 +869,84 @@ impl ProjectWindow {
                     return;
                 }
                 if crate::project::has_ext(&rel, "tex") {
-                    let stem = rel.with_extension("");
-                    this.toast(&format!("Inclúyelo con \\input{{{}}}", stem.display()));
+                    this.toast(&format!("Inclúyelo con \\input{{{}}}", rel.with_extension("").display()));
                 }
             }
-            this.project.borrow_mut().rescan();
             this.refresh_files();
             this.open_file(&rel);
         });
-        dialog.present(Some(&self.window));
-        entry.grab_focus();
     }
 
-    fn set_main(self: &Rc<Self>) {
-        let Some(rel) = self.editor.current() else { return };
+    fn new_folder_dialog(self: &Rc<Self>, dir: &Path) {
+        let initial = if dir.as_os_str().is_empty() { String::new() } else { format!("{}/", dir.display()) };
+        self.ask_path("Nueva carpeta", "Ruta dentro del proyecto", &initial, "Crear", |this, rel| {
+            let abs = this.project.borrow().root.join(&rel);
+            if let Err(e) = fs::create_dir_all(&abs) {
+                this.toast(&format!("No se pudo crear: {e}"));
+                return;
+            }
+            this.refresh_files();
+            this.tree.select(&rel);
+        });
+    }
+
+    fn rename_dialog(self: &Rc<Self>, rel: &Path) {
+        let from = rel.to_path_buf();
+        let body = format!("Nuevo nombre o ruta para «{}»", rel.display());
+        self.ask_path("Renombrar", &body, &rel.display().to_string(), "Renombrar", move |this, to| {
+            if to == from {
+                return;
+            }
+            let root = this.project.borrow().root.clone();
+            if root.join(&to).exists() {
+                this.toast(&format!("Ya existe {}", to.display()));
+                return;
+            }
+            let moved = to.parent().map_or(Ok(()), |p| fs::create_dir_all(root.join(p))).and_then(|_| fs::rename(root.join(&from), root.join(&to)));
+            if let Err(e) = moved {
+                this.toast(&format!("No se pudo renombrar: {e}"));
+                return;
+            }
+            this.editor.rename(&from, &to);
+            let main = this.project.borrow().main.clone();
+            if let Ok(rest) = main.strip_prefix(&from) {
+                let new_main = if rest.as_os_str().is_empty() { to.clone() } else { to.join(rest) };
+                this.set_main(&new_main);
+            }
+            this.refresh_files();
+        });
+    }
+
+    fn trash_dialog(self: &Rc<Self>, rel: &Path) {
+        let dialog = adw::AlertDialog::builder()
+            .heading("¿Mover a la papelera?")
+            .body(format!("«{}» se moverá a la papelera. Podrás recuperarlo desde tu gestor de archivos.", rel.display()))
+            .default_response("cancel")
+            .close_response("cancel")
+            .build();
+        dialog.add_responses(&[("cancel", "Cancelar"), ("trash", "Mover a la papelera")]);
+        dialog.set_response_appearance("trash", adw::ResponseAppearance::Destructive);
+        let weak = Rc::downgrade(self);
+        let rel = rel.to_path_buf();
+        dialog.connect_response(Some("trash"), move |_, _| {
+            let Some(this) = weak.upgrade() else { return };
+            let abs = this.project.borrow().root.join(&rel);
+            match gio::File::for_path(&abs).trash(gio::Cancellable::NONE) {
+                Ok(()) => {
+                    this.editor.forget(&rel);
+                    this.refresh_files();
+                    if this.project.borrow().main.starts_with(&rel) {
+                        this.toast("Has borrado el archivo principal: elige otro con clic derecho → Usar como archivo principal");
+                    }
+                }
+                Err(e) => this.toast(&format!("No se pudo mover a la papelera: {e}")),
+            }
+        });
+        dialog.present(Some(&self.window));
+    }
+
+    fn set_main(self: &Rc<Self>, rel: &Path) {
+        let rel = rel.to_path_buf();
         if !crate::project::has_ext(&rel, "tex") {
             self.toast("El archivo principal debe ser un .tex");
             return;
@@ -855,7 +958,7 @@ impl ProjectWindow {
         };
         config::update(|c| c.set_main(root, rel.clone()));
         self.pdf_mtime.set(None);
-        self.refresh_files();
+        self.tree.set_main(rel.clone());
         self.toast(&format!("Archivo principal: {}", rel.display()));
         self.compile();
     }
