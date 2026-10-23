@@ -473,23 +473,31 @@ impl Editor {
     /// Recarga los archivos que han cambiado en disco (git pull, otro editor…)
     /// y que no tienen cambios sin guardar aquí. Devuelve si recargó alguno.
     pub fn reload_external(&self) -> bool {
+        // Collect first and release `docs`: set_text emits `changed`, whose
+        // handlers borrow `docs` again.
+        let stale: Vec<(PathBuf, sourceview5::Buffer, Option<std::time::SystemTime>)> = self
+            .docs
+            .borrow()
+            .iter()
+            .filter_map(|doc| {
+                let disk = mtime(&self.root.join(&doc.rel));
+                (disk.is_some() && disk != doc.mtime && !doc.buffer.is_modified()).then(|| (doc.rel.clone(), doc.buffer.clone(), disk))
+            })
+            .collect();
         let mut reloaded = false;
-        for doc in self.docs.borrow_mut().iter_mut() {
-            let abs = self.root.join(&doc.rel);
-            let disk = mtime(&abs);
-            if disk.is_none() || disk == doc.mtime || doc.buffer.is_modified() {
-                continue;
+        for (rel, buffer, disk) in stale {
+            let Ok(text) = fs::read_to_string(self.root.join(&rel)) else { continue };
+            let line = buffer.iter_at_mark(&buffer.get_insert()).line();
+            buffer.begin_irreversible_action();
+            buffer.set_text(&text);
+            buffer.end_irreversible_action();
+            buffer.set_modified(false);
+            if let Some(it) = buffer.iter_at_line(line) {
+                buffer.place_cursor(&it);
             }
-            let Ok(text) = fs::read_to_string(&abs) else { continue };
-            let line = doc.buffer.iter_at_mark(&doc.buffer.get_insert()).line();
-            doc.buffer.begin_irreversible_action();
-            doc.buffer.set_text(&text);
-            doc.buffer.end_irreversible_action();
-            doc.buffer.set_modified(false);
-            if let Some(it) = doc.buffer.iter_at_line(line) {
-                doc.buffer.place_cursor(&it);
+            if let Some(doc) = self.docs.borrow_mut().iter_mut().find(|d| d.rel == rel) {
+                doc.mtime = disk;
             }
-            doc.mtime = disk;
             reloaded = true;
         }
         reloaded
@@ -939,7 +947,16 @@ impl Editor {
     }
 
     fn schedule_diff(self: &Rc<Self>, rel: &Path) {
-        let mut docs = self.docs.borrow_mut();
+        // A change made while `docs` is in use (a reload, say): retry right after.
+        let Ok(mut docs) = self.docs.try_borrow_mut() else {
+            let (weak, rel) = (Rc::downgrade(self), rel.to_path_buf());
+            glib::idle_add_local_once(move || {
+                if let Some(this) = weak.upgrade() {
+                    this.schedule_diff(&rel);
+                }
+            });
+            return;
+        };
         let Some(doc) = docs.iter_mut().find(|d| d.rel == rel) else { return };
         if doc.baseline.is_none() {
             return;
@@ -1236,6 +1253,31 @@ fn write_atomic(path: &Path, data: &[u8]) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Regression: reloading a file changed on disk crashed with "RefCell
+    /// already borrowed" when the file had change bars (a baseline).
+    #[test]
+    fn reloads_external_changes() {
+        if gtk::init().is_err() || adw::init().is_err() {
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("rutex-reload-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("a.tex"), "one\n").unwrap();
+        let editor = Editor::new(dir.clone(), Default::default());
+        editor.open(Path::new("a.tex")).unwrap();
+        editor.set_baseline(Path::new("a.tex"), Some("zero\n".into()));
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        fs::write(dir.join("a.tex"), "one\ntwo\n").unwrap();
+        // Make sure the mtime differs even on coarse filesystems.
+        let later = std::time::SystemTime::now() + std::time::Duration::from_secs(2);
+        fs::File::options().write(true).open(dir.join("a.tex")).unwrap().set_modified(later).unwrap();
+        assert!(editor.reload_external());
+        let view = editor.current_view().unwrap();
+        let (s, e) = view.buffer().bounds();
+        assert_eq!(view.buffer().text(&s, &e, false), "one\ntwo\n");
+        fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn paths_from_dropped_text() {
