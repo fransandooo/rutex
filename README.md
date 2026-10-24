@@ -80,103 +80,76 @@ You need GTK4, libadwaita, GtkSourceView, Poppler and TeX Live first: see [Requi
 
 ## Features
 
-### ✍️ Writing
+### Editing
 
-- **Live compilation.** When you stop typing, rutex saves and compiles with `latexmk`. If you
-  keep typing during a build, another build is queued instead of killing the running one, so
-  `.aux` files are never left corrupted.
-- **Tabs and a file tree.** Real folders, plus a right-click menu to create files and folders,
-  rename or move, set the main file, copy the path, show it in the file manager or move it to
-  the trash. Images and PDFs open with the system's default app.
-- **Autocompletion.** Commands with tab stops. `\begin{` inserts whole environments (figure,
-  table, align…), `\ref{` completes your labels and `\cite{` your `.bib` keys,
-  `\includegraphics{` completes images and `\input{` completes chapters.
-- **Editing shortcuts.** Comment lines, bold and italic, duplicate and move lines,
-  auto-closing `{ [ ( $`, and `\end{…}` inserted when you press Enter after `\begin{…}`.
-- **Outline.** The chapters and sections of the whole document (following `\input`), one click
-  away.
-- **Quick open** (`Ctrl+P`) with fuzzy search over files, or sections with `@`.
-- **Errors where they happen.** Lines with errors and warnings are marked in the editor. Hover
-  over one to read the message, or click its margin icon to open the problems list.
-- **Errors explained in plain words.** Hovering an error shows what it means and how to fix it,
-  for the ~40 most common LaTeX errors and warnings, offline. The same help is behind the **?**
-  next to each problem in the list.
-- **Spell checking** as you type, in the document's language (from `babel`/`polyglossia`). It
-  skips commands, math, labels, citation keys and file names.
-- **Hover a `\ref` or `\cite`** to see what it points to (the caption, section title or entry),
-  and **Ctrl+click** it to go to the `\label` or the `.bib` entry.
-- **Find and replace in the whole project** (`Ctrl+Shift+F`).
-- **Formula preview on hover**, rendered with your own preamble and macros.
-- **Drag an image** onto the editor to get a complete `figure` (the file is copied into the
-  project), and **paste cells from a spreadsheet** to get a `table`, or use Insert → Table from
-  CSV.
-- **References by DOI or arXiv id.** Paste it, and the entry is added to your `.bib` and cited.
-  **Zotero** (with Better BibTeX) works too.
-- **Folding.** An arrow in the margin folds a chapter, section or environment (`Alt+-` /
-  `Alt++`, and `Ctrl+Alt+-` folds every section). Folded text is only hidden, and going to a line
-  inside it opens it.
-- **Symbol palette** (`Ctrl+Shift+M`) with search, and quick snippets. Inside a formula,
-  `@a` → `\alpha`, `@8` → `\infty` and `@/` → a fraction. `BEQ` + `Tab` gives an equation (also
-  `BAL`, `BIT`, `BEN`, `BFI`, `BTA`, `BCAS`…).
-- **Words per chapter** and an optional word goal, from the status bar.
-- **Optional Vim mode**.
+| Feature | What it does |
+| --- | --- |
+| **Live compilation** | Saves and compiles with `latexmk` when you stop typing. If you keep typing during a build, the next one is queued instead of killing it, so `.aux` files are never left corrupted. |
+| **Autocompletion** | Commands with tab stops and whole environments after `\begin{`. It also completes your labels in `\ref{`, your `.bib` keys in `\cite{`, images in `\includegraphics{` and chapters in `\input{`. |
+| **Editing shortcuts** | Comment lines, bold and italic, duplicate and move lines, auto-closing `{ [ ( $`, and `\end{…}` added when you press Enter after `\begin{…}`. |
+| **Symbols and snippets** | A searchable symbol palette (<kbd>Ctrl+Shift+M</kbd>). Inside a formula, `@a` becomes `\alpha`, `@8` becomes `\infty` and `@/` a fraction. `BEQ` + <kbd>Tab</kbd> gives an equation, and so do `BAL`, `BIT`, `BEN`, `BFI`, `BTA`, `BCAS`… |
+| **Folding** | An arrow in the margin folds a chapter, section or environment (<kbd>Alt+-</kbd> / <kbd>Alt++</kbd>, or <kbd>Ctrl+Alt+-</kbd> for every section). Folded text is only hidden, and going to a line inside it opens it. |
+| **Spell checking** | As you type, in the document's language (from `babel` or `polyglossia`). It skips commands, math, labels, citation keys and file names. |
+| **Word count** | Words per chapter and an optional word goal, from the status bar. |
+| **Vim mode** | Optional, from Preferences. |
 
-### 🤝 Working with others
+### Finding your way
 
-- **Sync through Git** (GitHub, GitLab, Overleaf's Git access…). In a project that is a Git
-  repository with a remote, a **Sync** button commits your changes, brings in everyone else's
-  and sends yours. If two people changed the same lines, rutex says so in plain words and takes
-  you there. After you keep the right text, Sync again. There is no server and nothing runs in
-  the background: the network is only used when you press Sync.
-- **Export to Word** (☰ → Export to Word), for supervisors who review in Word. Equations become
-  real Word equations, references keep their numbers, and TikZ drawings, plots, Gantt charts and
-  pseudocode are inserted as images. Needs `pandoc` (`sudo pacman -S pandoc-cli`).
+| Feature | What it does |
+| --- | --- |
+| **Files and tabs** | Real folders, with a right-click menu to create, rename, move or trash files, set the main file, copy the path or show it in the file manager. Images and PDFs open with the system's default app. |
+| **Outline** | The chapters and sections of the whole document, following `\input`, one click away. |
+| **Quick open** | <kbd>Ctrl+P</kbd> searches files with fuzzy matching, or sections if you start with `@`. |
+| **Find and replace** | Across the whole project (<kbd>Ctrl+Shift+F</kbd>). |
+| **References at a glance** | Hover a `\ref` or `\cite` to see what it points to (the caption, section title or entry), and <kbd>Ctrl</kbd>+click it to go to the `\label` or the `.bib` entry. |
 
-### 📄 PDF
+### Figures, tables and references
 
-- **Built-in viewer** that renders only the visible pages, on a separate thread. It doesn't
-  flicker and keeps your scroll position when it reloads.
-- **SyncTeX.** Double-click (or `Ctrl+click`) the PDF to jump to the source line, and press
-  `Ctrl+J` to jump from the source to the PDF.
-- **Clickable links.** The table of contents, `\ref`, `\cite` and URLs work like in any PDF
-  viewer, with a back button to return.
-- **Fullscreen reading.** `F11` or the button in the viewer shows only the PDF, and `Esc` goes
-  back.
-- **Dark mode for the PDF** (the moon button in the viewer), which repaints pages with your
-  theme colors.
+| Feature | What it does |
+| --- | --- |
+| **Formula preview** | Hover a formula to see it rendered with your own preamble and macros. |
+| **Images** | Drag one onto the editor to get a complete `figure`. The file is copied into the project. |
+| **Tables** | Paste cells from a spreadsheet to get a `table`, or use Insert → Table from CSV. |
+| **DOI and arXiv** | Paste a DOI or arXiv id, and the entry is added to your `.bib` and cited. **Zotero** (with Better BibTeX) works too. |
 
-### 🛟 Safety net
+### Errors and checks
 
-- **Local version history** (`Ctrl+Shift+H`). Automatic versions while you work, named versions
-  (`Ctrl+Shift+S`), a readable diff against your current files and one-click restore. It is a
-  private Git repository in `~/.local/share/rutex/history/`: nothing is written into your
-  project and nothing leaves your machine.
-- **Check before submitting** (`Ctrl+Shift+R`). Undefined references and citations, labels never
-  referenced, uncited bibliography entries, duplicate labels, text sticking into the margin
-  (worst first) and to-do notes, each one clickable.
-- **Missing packages.** When a build fails because a `.sty` is missing, rutex tells you which
-  package provides it (from TeX Live's own database, offline) and copies the `pacman` command.
-- **No compile timeout.** Overleaf's free plan stops compiling after 10 seconds. A thesis with
-  plots and a bibliography easily needs more.
+| Feature | What it does |
+| --- | --- |
+| **Errors where they happen** | Lines with errors and warnings are marked in the editor. Hover one to read the message, or click its margin icon to open the problems list. |
+| **Errors explained** | Hovering an error shows what it means and how to fix it, for the ~40 most common LaTeX errors and warnings, offline. The same help is behind the **?** next to each problem in the list. |
+| **Check before submitting** | <kbd>Ctrl+Shift+R</kbd> lists undefined references and citations, labels never referenced, uncited entries, duplicate labels, text sticking into the margin (worst first) and to-do notes. Each one is clickable. |
+| **Missing packages** | When a build fails because a `.sty` is missing, rutex tells you which package provides it (from TeX Live's own database, offline) and copies the `pacman` command. |
+| **No compile timeout** | Overleaf's free plan stops compiling after 10 seconds. A thesis with plots and a bibliography easily needs more. |
 
-### 🎨 Looks
+### PDF viewer
 
-- **Follows your Omarchy theme live.** Change it with `omarchy-theme-set` and the interface and
-  the editor's syntax colors update immediately. On other desktops it follows the system's
-  light/dark setting.
-- Its own flat look: custom tabs, and a command center in the header that opens quick open.
+| Feature | What it does |
+| --- | --- |
+| **Smooth reloads** | Only the visible pages are rendered, on a separate thread. The viewer doesn't flicker and keeps your scroll position when it reloads. |
+| **SyncTeX** | Double-click (or <kbd>Ctrl</kbd>+click) the PDF to jump to the source line, and press <kbd>Ctrl+J</kbd> to jump from the source to the PDF. |
+| **Clickable links** | The table of contents, `\ref`, `\cite` and URLs work like in any PDF viewer, with a back button to return. |
+| **Fullscreen reading** | <kbd>F11</kbd> or the button in the viewer shows only the PDF, and <kbd>Esc</kbd> goes back. |
+| **Dark mode** | The moon button repaints the pages with your theme colors. |
 
-### 📁 Projects
+### Working with others and history
 
-- **A showcase demo.** "Try the demo" on the welcome screen opens an 18-page project with TikZ,
-  PGFPlots, circuits, trees, tables, algorithms, code listings, a Gantt chart and a
-  bibliography. Its source is in [`demo/`](demo/).
-- **Templates.** Article, thesis (chapters, biblatex + biber), lecture notes, Beamer slides and
-  empty. They follow the interface language, including `babel` and folder names.
-- **Automatic engine choice.** pdfLaTeX by default, and XeLaTeX for `fontspec` / `unicode-math`
-  / `polyglossia`. The `% !TEX program` and `% !TEX root` magic comments and your `latexmkrc`
-  are respected.
-- **Clean project folders.** Build files go to `~/.cache/rutex/`.
+| Feature | What it does |
+| --- | --- |
+| **Sync through Git** | Works with GitHub, GitLab, Overleaf's Git access… In a repository with a remote, **Sync** commits your changes, brings in everyone else's and sends yours. If two people changed the same lines, rutex says so in plain words and takes you there. Keep the right text and Sync again. The network is only used when you press Sync. |
+| **Export to Word** | ☰ → Export to Word, for supervisors who review in Word. Equations become real Word equations, references keep their numbers, and TikZ drawings, plots, Gantt charts and pseudocode become images. Needs `pandoc` (`sudo pacman -S pandoc-cli`). |
+| **Version history** | <kbd>Ctrl+Shift+H</kbd> shows automatic versions saved while you work and named ones (<kbd>Ctrl+Shift+S</kbd>), with a readable diff and one-click restore. It is a private Git repository in `~/.local/share/rutex/history/`: nothing is written into your project and nothing leaves your machine. |
+
+### Projects and looks
+
+| Feature | What it does |
+| --- | --- |
+| **Showcase demo** | "Try the demo" on the welcome screen opens an 18-page project with TikZ, PGFPlots, circuits, trees, tables, algorithms, code listings, a Gantt chart and a bibliography. Its source is in [`demo/`](demo/). |
+| **Templates** | Article, thesis (chapters, biblatex + biber), lecture notes, Beamer slides and empty. They follow the interface language, including `babel` and folder names. |
+| **Automatic engine** | pdfLaTeX by default, and XeLaTeX for `fontspec`, `unicode-math` or `polyglossia`. The `% !TEX program` and `% !TEX root` magic comments and your `latexmkrc` are respected. |
+| **Clean project folders** | Build files go to `~/.cache/rutex/`. |
+| **Omarchy theme, live** | Change it with `omarchy-theme-set` and the interface and syntax colors update at once. On other desktops rutex follows the system's light or dark setting. |
+| **Its own flat look** | Custom tabs, and a command center in the header that opens quick open. |
 
 ## Requirements
 
